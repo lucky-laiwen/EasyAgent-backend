@@ -10,7 +10,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 
 bearer_token = OAuth2PasswordBearer(
-    tokenUrl="/user/login",
+    tokenUrl="/user/token",
     scheme_name="JWT"
 )
 
