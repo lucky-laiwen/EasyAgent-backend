@@ -52,9 +52,9 @@ async def login_route(request:Request, form_data: UserLogin, db: Session = Depen
     user_obj, status_res = crud_user.login(db=db, email=form_data.email, password=form_data.password)
     _ = request.state._
     if status_res == "not_found":
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=_("user_not_found"))
     elif status_res == "wrong_password":
-        raise HTTPException(status_code=401, detail="Invalid password")
+        raise HTTPException(status_code=401, detail=_("invalid_password"))
 
     token = create_access_token(
         data={"id": str(user_obj.id)},
@@ -86,7 +86,6 @@ async def get_current_user(
     try:
         payload = decode_token(token)
         user_id = payload.get("sub")
-        print(user_id,9999)
         if user_id is None:
             raise credentials_exception
     except Exception:
