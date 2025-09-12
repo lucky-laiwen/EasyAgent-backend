@@ -21,7 +21,34 @@ msgstr ""
 #: bat.py:10 router/user.py:64
 msgid "login_success"
 msgstr "Login Success!"
+
 msgid "user_not_found"
 msgstr "User not found!"
+
 msgid "invalid_password"
 msgstr "Invalid password!"
+
+msgid "not_authenticated"
+msgstr "Not authenticated!"
+
+msgid "invalid_token"
+msgstr "Invalid token!"
+
+msgid "token_expired"
+msgstr "Token expired!"
+
+msgid "current_user_fetched"
+msgstr "Current user fetched successfully!"
+
+msgid "user_registered"
+msgstr "Email already registered!"
+
+msgid "create_success"
+msgstr "Creation successful"
+
+msgid "logout_success"
+msgstr "Logout successful"
+
+msgid "update_success"
+msgstr "Update successful"
+

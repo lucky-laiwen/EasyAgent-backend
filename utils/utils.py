@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import jwt
-from fastapi import HTTPException
+from fastapi import HTTPException,Depends
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
 ALGORITHM = "HS256"
@@ -27,9 +26,9 @@ def decode_token(token: str):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401)
     except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401)
 
     
 # 获取密码的哈希值
@@ -41,3 +40,7 @@ def get_password_hash(password: str):
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
+# 获取当前用户
+def get_current_user(token: str = Depends(bearer_token)):
+    return decode_token(token)
+     

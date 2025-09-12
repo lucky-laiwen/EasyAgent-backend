@@ -32,7 +32,7 @@ def create_user(db: Session, name: str, email: str, password: str) -> User:
     # 1. 检查邮箱是否存在
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise ValueError("Email already registered")  # 或者抛 FastAPI 的 HTTPException
+        return None  # 或者抛 FastAPI 的 HTTPException
 
     # 2. 创建用户
     hash_password = get_password_hash(password)
@@ -42,4 +42,36 @@ def create_user(db: Session, name: str, email: str, password: str) -> User:
     db.refresh(user)
     return user
 
+# 注销用户
+def delete_user(db: Session, user_id: int) -> bool:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False  # 或者抛 FastAPI 的 HTTPException
+    db.delete(user)
+    db.commit()
+    return True
 
+# 更新用户信息
+def update_user(db: Session, user_id: int, name: Optional[str], email: Optional[str], password: Optional[str]) -> Optional[User]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None  # 或者抛 FastAPI 的 HTTPException
+    if name and email and password:
+        user.name = name
+        user.email = email
+        hash_password = get_password_hash(password)
+        user.password = hash_password
+    db.commit()
+    db.refresh(user)
+    return user
+
+# 重置密码
+def reset_password(db: Session, email: str, password: str) -> Optional[User]:
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return None  # 或者抛 FastAPI 的 HTTPException
+    hash_password = get_password_hash(password)
+    user.password = hash_password
+    db.commit()
+    db.refresh(user)
+    return user

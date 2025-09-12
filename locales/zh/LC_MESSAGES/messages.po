@@ -18,10 +18,36 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.17.0\n"
 
-#: bat.py:10 router/user.py:64
+
 msgid "login_success"
 msgstr "登陆成功"
+
 msgid "user_not_found"
 msgstr "用户不存在"
+
 msgid "invalid_password"
 msgstr "密码错误"
+
+msgid "not_authenticated"
+msgstr "凭证已过期"
+
+msgid "invalid_token"
+msgstr "无效的凭证"
+
+msgid "token_expired"
+msgstr "Token 已过期"
+
+msgid "current_user_fetched"
+msgstr "当前用户信息获取成功"
+
+msgid "user_registered"
+msgstr "用户已注册"
+
+msgid "create_success"
+msgstr "创建成功"
+
+msgid "logout_success"
+msgstr "注销成功"
+
+msgid "update_success"
+msgstr "更新成功"
