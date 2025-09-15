@@ -54,7 +54,7 @@ async def get_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessio
 async def login_route(request:Request, form_data: UserLogin, db: Session = Depends(get_db)):
     """
     {
-        "email": "huahua@123.com",
+        "email": "mm@123.com",
         "password": "123456"
     }
     """
@@ -64,6 +64,10 @@ async def login_route(request:Request, form_data: UserLogin, db: Session = Depen
         raise HTTPException(status_code=404, detail=_("user_not_found"))
     elif status_res == "wrong_password":
         raise HTTPException(status_code=401, detail=_("invalid_password"))
+    elif status_res == "frozen":
+        raise HTTPException(status_code=401, detail=_("user_frozen"))
+    elif status_res == "banned":
+        raise HTTPException(status_code=401, detail=_("user_Banned"))
 
     token = create_access_token(
         data={"id": str(user_obj.id)},
@@ -79,8 +83,7 @@ async def login_route(request:Request, form_data: UserLogin, db: Session = Depen
 # 获取当前用户
 @router.get("/current_user",response_model=UserOut)
 async def current_user(request:Request, db: Session = Depends(get_db), token: str = Depends(get_current_user)):
-    user_id = token["sub"]
-    user_obj = crud_user.get_user(db=db, user_id=int(user_id))
+    user_obj = crud_user.get_user(db=db, user_id=int(token))
     _ = request.state._
     if not user_obj:
         raise HTTPException(status_code=404, detail=_("user_not_found"))
@@ -92,8 +95,7 @@ async def current_user(request:Request, db: Session = Depends(get_db), token: st
 @router.delete("/logout",response_model=ResponseSchema)
 async def logout_route(request:Request, db: Session = Depends(get_db), token: str = Depends(get_current_user)):
     _ = request.state._
-    user_id = token["sub"]
-    if not crud_user.delete_user(db=db, user_id=user_id):
+    if not crud_user.delete_user(db=db, user_id=token):
         raise HTTPException(status_code=404, detail=_("user_not_found"))
     return ResponseSchema.ok(message=_("logout_success"))
 
@@ -101,8 +103,7 @@ async def logout_route(request:Request, db: Session = Depends(get_db), token: st
 @router.put("/update_user",response_model=ResponseSchema)
 async def update_route(user: UserCreate, request:Request, db: Session = Depends(get_db), user_data: str = Depends(get_current_user)):
     _ = request.state._
-    user_id = user_data["sub"]
-    user_obj = crud_user.update_user(db=db, user_id=user_id, name=user.name, email=user.email, password=user.password)
+    user_obj = crud_user.update_user(db=db, user_id=user_data, name=user.name, email=user.email, password=user.password)
     if not user_obj:
         raise HTTPException(status_code=404, detail=_("user_not_found"))
     user_out = UserOut.model_validate(user_obj) 

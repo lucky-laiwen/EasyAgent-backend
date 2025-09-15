@@ -15,16 +15,24 @@ def get_all_users(db: Session) -> list[User]:
 
 
 # 用户登录
-def login(db: Session, email: str, password: str) -> tuple[
-    Optional[User], Literal["not_found", "wrong_password", "ok"]]:
+def login(
+    db: Session, email: str, password: str
+) -> tuple[Optional[User], Literal["not_found", "wrong_password", "ok", "frozen", "banned"]]:
     user = db.query(User).filter(User.email == email).first()
+
     if not user:
         return None, "not_found"
+
+    if user.is_active == 1:
+        return None, "frozen"   # 冻结
+    elif user.is_active == 2:
+        return None, "banned"   # 封禁
 
     if not verify_password(password, user.password):
         return None, "wrong_password"
 
     return user, "ok"
+
 
 
 # 创建用户

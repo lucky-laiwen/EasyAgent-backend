@@ -52,3 +52,9 @@ msgstr "Logout successful"
 msgid "update_success"
 msgstr "Update successful"
 
+msgid "user_frozen"
+msgstr "The user has been frozen"
+
+msgid "user_Banned"
+msgstr "The user has been banned"
+
