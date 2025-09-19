@@ -2,16 +2,15 @@ from pydantic import BaseModel, Field , field_serializer
 from datetime import datetime
 # 创建聊天
 class CreateChat(BaseModel):
+    id: int = Field(..., description="聊天id")
     message: str = Field(..., description="聊天内容")
-    title:str = Field(..., description="聊天标题")
-
+    
     class Config:
         from_attributes = True
 
 # 聊天详情返回
 class ChatItem(BaseModel):
     id: int = Field(..., description="聊天id")
-    message: str = Field(..., description="聊天内容")
     title:str = Field(..., description="聊天标题")
     created_at:datetime = Field(..., description="创建时间")
     class Config:

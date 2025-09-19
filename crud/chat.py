@@ -11,14 +11,18 @@ def get_user_by_id(db:Session,user_id:int) -> bool:
     return True
 
 # 创建聊天
-def create_chat(db:Session,user_id:int,message:str,title:str) -> Optional[Chat]:
+def create_chat(db:Session,user_id:int,id:int) -> Optional[Chat]:
     if not get_user_by_id(db,user_id):
         return None
-    chat = Chat(user_id=user_id,message=message,title=title)
-    db.add(chat)
-    db.commit()
-    db.refresh(chat)
-    return chat
+    is_have_chat = db.query(Chat).filter(Chat.id == id,Chat.user_id == user_id).first()
+    if not is_have_chat:
+        chat = Chat(user_id=user_id,title=f"chat{id}")
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+        return chat
+    else:
+        return is_have_chat
 
 # 获取对应用户的聊天记录
 def get_chat_by_user_id(db:Session,user_id:int,page_size:int,last_id:int | None=None) -> Optional[list[Chat]]:
