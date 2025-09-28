@@ -10,11 +10,11 @@ def get_user(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
 
 # 创建聊天内容
-def create_message(db: Session, chat_id: int, content: str , sender: int) -> Optional[Message]:
+def create_message(db: Session, chat_id: int, content: str ,sender: int, think_content: str) -> Optional[Message]:
     chat = db.query(Chat).filter(Chat.id == chat_id).first()
     if not chat:
         return None
-    message = Message(chat_id=chat_id, content=content,sender=sender)
+    message = Message(chat_id=chat_id, content=content,sender=sender,think_content=think_content)
     db.add(message)
     db.commit()
     db.refresh(message)

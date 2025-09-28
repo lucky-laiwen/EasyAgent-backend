@@ -10,10 +10,11 @@ class CreateMessage(BaseModel):
 
 # 返回聊天内容
 class Message(BaseModel):
-    id: int = Field(..., description="聊天id")
+    id: int = Field(..., description="聊天信息id")
     content: str = Field(..., description="聊天内容")
     sender:int = Field(..., description="聊天标题")
     created_at: datetime = Field(..., description="创建时间")
-    
+    chat_id: int = Field(..., description="聊天id")
+    think_content: str = Field(..., description="思考内容")
     class Config:
         from_attributes = True

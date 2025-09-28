@@ -10,6 +10,7 @@ class Message(Base):
     sender = Column(SmallInteger, nullable=False, comment="0=user, 1=ai")
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+    think_content = Column(Text)
 
     # 关系映射，方便 ORM 查询时直接获取 chat
     chat = relationship("Chat", back_populates="messages")
