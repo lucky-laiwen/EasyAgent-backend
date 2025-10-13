@@ -11,18 +11,19 @@ def get_user_by_id(db:Session,user_id:int) -> bool:
     return True
 
 # 创建聊天
-def create_chat(db:Session,user_id:int,id:int) -> Optional[Chat]:
-    if not get_user_by_id(db,user_id):
+def create_chat(db: Session, user_id: int, id: int) -> Optional[Chat]:
+    if not get_user_by_id(db, user_id):
         return None
-    is_have_chat = db.query(Chat).filter(Chat.id == id,Chat.user_id == user_id).first()
+    is_have_chat = db.query(Chat).filter(Chat.id == id, Chat.user_id == user_id).first()
     if not is_have_chat:
-        chat = Chat(user_id=user_id,title=f"chat{id}")
+        chat = Chat(user_id=user_id, title= "")
         db.add(chat)
         db.commit()
         db.refresh(chat)
         return chat
     else:
         return is_have_chat
+
 
 # 获取对应用户的聊天记录
 def get_chat_by_user_id(db:Session,user_id:int,page_size:int,last_id:int | None=None) -> Optional[list[Chat]]:
@@ -35,3 +36,33 @@ def get_chat_by_user_id(db:Session,user_id:int,page_size:int,last_id:int | None=
     next_last_id = chats[-1].id if chats else None
 
     return {"data": chats, "next_last_id": next_last_id}
+
+# 更新聊天标题
+def update_chat_title(db:Session,user_id:int,chat_id:int,title:str) -> Optional[Chat]:
+    if not get_user_by_id(db,user_id):
+        return None
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
+    if not chat:
+        return None
+    chat.title = title
+    db.commit()
+    db.refresh(chat)
+    return chat
+
+# 删除聊天
+def delete_chat(db: Session, user_id: int, chat_id: int):
+    if not get_user_by_id(db, user_id):
+        return None
+
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
+    if not chat:
+        return None
+
+    try:
+        db.delete(chat)
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error deleting chat {chat_id}: {e}")
+        return False
