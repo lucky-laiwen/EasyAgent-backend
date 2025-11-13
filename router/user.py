@@ -24,13 +24,19 @@ async def get_all_users(db: Session = Depends(get_db),_: str = Depends(get_curre
 
 # 注册
 @router.post("/create_user", response_model=ResponseSchema)
-async def create_user(user: UserCreate,request:Request, db: Session = Depends(get_db),_: str = Depends(get_current_user)):
+async def create_user(user: UserCreate,request:Request, db: Session = Depends(get_db)):
     _ = request.state._
     payload = crud_user.create_user(db=db, name=user.name, email=user.email, password=user.password)
     if not payload:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST , detail=_("user_registered")) 
+    user_out = UserOut.model_validate(payload) 
+    token = create_access_token(
+        data={"id": str(user_out.id)},
+        expires_delta=None
+    )
     return ResponseSchema.ok(message=_("create_success"),data={
-        "user": UserOut.model_validate(payload)
+        "user": user_out,
+        "access_token": token,
     })
 
 # Swagger UI 登录
@@ -61,13 +67,13 @@ async def login_route(request:Request, form_data: UserLogin, db: Session = Depen
     user_obj, status_res = crud_user.login(db=db, email=form_data.email, password=form_data.password)
     _ = request.state._
     if status_res == "not_found":
-        raise HTTPException(status_code=404, detail=_("user_not_found"))
+        return ResponseSchema.fail(message=_("user_not_found")) 
     elif status_res == "wrong_password":
-        raise HTTPException(status_code=401, detail=_("invalid_password"))
+        return ResponseSchema.fail(message=_("invalid_password"))
     elif status_res == "frozen":
-        raise HTTPException(status_code=401, detail=_("user_frozen"))
+        return ResponseSchema.fail(message=_("user_frozen"))
     elif status_res == "banned":
-        raise HTTPException(status_code=401, detail=_("user_Banned"))
+        return ResponseSchema.fail(message=_("user_Banned"))
 
     token = create_access_token(
         data={"id": str(user_obj.id)},
@@ -110,8 +116,8 @@ async def update_route(user: UserCreate, request:Request, db: Session = Depends(
     return ResponseSchema.ok(message=_("update_success"),data=user_out)
 
 # 忘记密码
-@router.post("/forgot_password",response_model=ResponseSchema,description="忘记密码")
-async def forgot_password_route(request:Request, user:UserLogin, db: Session = Depends(get_db)):
+@router.post("/forget_password",response_model=ResponseSchema,description="忘记密码")
+async def forget_password_route(request:Request, user:UserLogin, db: Session = Depends(get_db)):
     _ = request.state._
     user_obj = crud_user.reset_password(db=db, email=user.email,password=user.password)
     if not user_obj:

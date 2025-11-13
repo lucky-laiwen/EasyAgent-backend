@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, Integer, Text, ForeignKey, DateTime, func, SmallInteger
+from sqlalchemy import Column, BigInteger, Integer, Text, ForeignKey, DateTime, func, SmallInteger ,CHAR
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -11,6 +11,7 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     think_content = Column(Text)
-
+    tool_content = Column(Text,nullable=True)
+    tool_name = Column(CHAR(50),nullable=True)
     # 关系映射，方便 ORM 查询时直接获取 chat
     chat = relationship("Chat", back_populates="messages")

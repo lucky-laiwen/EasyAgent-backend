@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, func
 from database import Base
-
+from sqlalchemy.orm import relationship
 
 class User(Base):
     __tablename__ = 'user'
@@ -11,3 +11,4 @@ class User(Base):
     password = Column(String, nullable=False)
     is_active = Column(Integer, default=0)
 
+    chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
