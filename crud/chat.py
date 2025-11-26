@@ -16,7 +16,7 @@ def create_chat(db: Session, user_id: int, id: int) -> Optional[Chat]:
         return None
     is_have_chat = db.query(Chat).filter(Chat.id == id, Chat.user_id == user_id).first()
     if not is_have_chat:
-        chat = Chat(user_id=user_id, title= "搜索")
+        chat = Chat(user_id=user_id, title= "问候")
         db.add(chat)
         db.commit()
         db.refresh(chat)

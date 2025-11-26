@@ -63,15 +63,17 @@ async def create_chat_router(
 
                 if chunk.get("type") == "tool_start":
                     tool_name+=chunk['tool']
-                    print(f"tool_name:{tool_name}")
                     yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': tool_name})}\n\n"
 
                 if chunk.get("type") == "tool_mid":
-                    tool_content_str = chunk['tool_content']  # 这是 str
-                    tool_content = json.loads(tool_content_str)  # 变成真正的 list
-                    print(f"tool_content 类型: {type(tool_content)}")
-                    print(f"tool_content 内容: {tool_content}")
-                    yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': tool_content})}\n\n"
+                    tool_content_str = chunk.get("tool_content")
+                    try:
+                        tool_content = json.loads(tool_content_str)
+                    except (TypeError, json.JSONDecodeError):
+                        tool_content = tool_content_str  # 回退为原始值
+
+                    yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': tool_content}, ensure_ascii=False)}\n\n"
+
 
                 if thinking:
                     think_content += thinking

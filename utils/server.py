@@ -2,76 +2,79 @@ import asyncio
 import aiohttp
 from fastmcp import FastMCP
 from duckduckgo_search import DDGS
+from datetime import datetime
+import json
 mcp = FastMCP("Web Search & Weather MCP")
 
 async def fetch_json(url: str):
     """通用的 JSON 请求函数"""
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
-            if resp.status != 200:
-                return None
             return await resp.json()
         
-def get_weather_desc(code):
-    match code:
-        case "Sunny" | "Clear":
-            return "晴天"
-        case "PartlyCloudy" | "Partly cloudy":
-            return "局部多云"
-        case "Cloudy" | "Overcast" | "VeryCloudy":
-            return "多云"
-        case "Rain" | "LightRain" | "HeavyRain" | "Showers" | "LightShowers" | "HeavyShowers":
-            return "下雨"
-        case "Thunder" | "ThunderyShowers":
-            return "雷雨"
-        case "Snow" | "LightSnow" | "HeavySnow" | "SnowShowers":
-            return "雪"
-        case "Sleet" | "LightSleet" | "HeavySleet" | "SleetShowers":
-            return "雨夹雪"
-        case "Fog" | "Mist":
-            return "雾"
-        case "Hail":
-            return "冰雹"
-        case "FreezingRain":
-            return "冻雨"
-        case _:
-            return "未知天气"
-
+def normalize_city_name(city: str) -> str:
+    # 去掉常见后缀
+    for suffix in ["市", "县", "区","镇","乡","村"]:
+        if city.endswith(suffix):
+            city = city[:-len(suffix)]
+    return city
 
 @mcp.tool
 async def weather_query(city: str) -> str:
     """
     智能网页搜索 / 天气查询工具。
-    - 若 query 包含天气相关词汇，则调用 wttr.in API。
-    - 否则使用 DuckDuckGo API 进行搜索。
     """
 
-    # 使用 wttr.in 进行天气查询
-    url = f"https://wttr.in/{city}?format=j1"
-    data = await fetch_json(url)
+    # 默认 data 为 None
+    data = {}
+    with open(r'utils/city.json', 'r', encoding='utf-8') as f:
+        content = f.read()
+        for i in json.loads(content):
+            if i['countyname'] == normalize_city_name(city):
+                url = f"http://t.weather.sojson.com/api/weather/city/{i['areaid']}"
+                data = await fetch_json(url)
+                break  # 找到城市后就跳出
+
     if not data:
         return f"无法获取「{city}」的天气信息。"
 
-    current = data["current_condition"][0]
-    desc = current.get("lang_zh", [{"value": current.get("weatherDesc", [{'value': '未知'}])[0]['value']}])[0]['value']
-        
-    temp = current.get("temp_C", "?")
-    feel = current.get("FeelsLikeC", "?")
-    humidity = current.get("humidity", "?")
-    wind = current.get("windspeedKmph", "?")
-    direction = current.get("winddir16Point", "?")
-    uv = current.get("uvIndex", "?")
-    pressure = current.get("pressure", "?")
+    # 读取今日天气
+    forecast = data["data"]["forecast"][0]  # 今日天气
 
-    return (
+    # 对应字段
+    cur_date = forecast['ymd']          # 日期
+    high = forecast['high']             # 最高温度
+    low = forecast['low']               # 最低温度
+    week = forecast['week']             # 星期
+    sunrise = forecast['sunrise']       # 日出时间
+    sunset = forecast['sunset']         # 日落时间
+    aqi = forecast['aqi']               # 空气质量指数
+    fx = forecast['fx']                 # 风向
+    fl = forecast['fl']                 # 风力等级
+    weather_type = forecast['type']     # 天气类型
+    notice = forecast.get('notice', '') # 天气提示
+    air_quality = data["data"]["quality"] # 空气质量
+
+    modal_str = (
         f"📍 当前城市：{city}\n\n"
-        f"🌤 天气状况：{get_weather_desc(desc)}\n\n"
-        f"🌡 实际温度：{temp}°C（体感 {feel}°C）\n\n"
-        f"💧 湿度：{humidity}%\n\n"
-        f"💨 风速：{wind} km/h（{direction}）\n\n"
-        f"☀️ 紫外线指数：{uv}\n\n"
-        f"🌪 气压：{pressure} hPa"
+        f"📅 日期：{cur_date}（{week}）\n\n"
+        f"🌡 最高温度：{high}\n"
+        f"🌡 最低温度：{low}\n\n"
+        f"🌅 日出时间：{sunrise}\n"
+        f"🌇 日落时间：{sunset}\n\n"
+        f"💨 风向：{fx}\n"
+        f"🍃 风力等级：{fl}\n\n"
+        f"🌫 空气质量指数（AQI）：{aqi} / {air_quality}\n\n"
+        f"☀️ 天气：{weather_type}\n\n"
+        f"📝 小贴士：{notice}"
     )
+
+    return json.dumps({
+        "modal_data": modal_str,
+        "full_data": data["data"]["forecast"]  # 返回完整天气数组
+    })
+
+
 
 @mcp.tool
 async def web_search(query: str):
@@ -79,7 +82,7 @@ async def web_search(query: str):
         # 在子线程中调用同步搜索
         def search():
             with DDGS() as ddgs:
-                return list(ddgs.text(query, region="cn-zh", max_results=10))
+                return list(ddgs.text(query, region="cn-zh", max_results=20))
 
         results = await asyncio.to_thread(search)
 

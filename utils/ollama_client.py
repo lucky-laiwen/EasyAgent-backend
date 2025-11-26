@@ -1,7 +1,7 @@
 from ollama import chat,ChatResponse
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
-import asyncio
+import json
 async def chat_with_ollama_stream(messages):
     search_result = ""
     full_messages = []
@@ -19,7 +19,6 @@ async def chat_with_ollama_stream(messages):
         stream=True,
         tools=[weather_query,web_search]
     )
-
     for chunk in response:
         if chunk.message.tool_calls:
             tool_call = chunk.message.tool_calls[0]
@@ -28,7 +27,14 @@ async def chat_with_ollama_stream(messages):
             tool_name = tool_call.function.name
             yield {"type": "tool_start", "tool": tool_name, "args": {args.get("city") or args.get("query"): param}}
             if tool_name == "weather_query":
-                search_result = await weather_query(param)
+                try:
+                    res_str = await weather_query(param)  
+                    res = json.loads(res_str)              
+                    search_result = res["modal_data"]
+                    yield {"type": "tool_mid", "tool": tool_name, "tool_content": res["full_data"]}
+                except Exception as e:
+                    print("调用 weather_query 出错:", e)
+                    search_result = ""
             elif tool_name == "web_search":
                 search_result = await web_search(param)
                 yield {"type": "tool_mid", "tool": tool_name, "tool_content": search_result}
