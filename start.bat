@@ -1,0 +1,1 @@
+cmd /c "cd /d D:\minio\bin&& .\minio.exe server  --address "127.0.0.1:9000" --console-address "127.0.0.1:9001"  D:\minio\data"

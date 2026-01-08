@@ -9,8 +9,9 @@ from crud.messages import create_message,get_chat_messages
 from schemas.response import ResponseSchema
 from database import get_db
 from sqlalchemy.orm import Session
-from utils.ollama_client import chat_with_ollama_stream
+from utils.ollama_client import chat_with_ollama_stream , generate_chat_title
 import json
+from utils.open_router_llm import chat_with_openrouter_stream
 router = APIRouter(
     prefix="/chat",
     tags=["chat"]
@@ -19,16 +20,13 @@ router = APIRouter(
 # 创建新聊天
 @router.post('/create_chat', response_model=ResponseSchema)
 async def create_chat_router(chatData: CreateChat, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    
+    title = await generate_chat_title(chatData.message)
     # 创建聊天对象
-    chat_obj = create_chat(db, user, chatData.id)
+    chat_obj = create_chat(db, user, chatData.id,title)
     if not chat_obj:
         return ResponseSchema.fail(message="创建聊天失败", data=None)
-
-    # 存用户发的消息
-    message_obj = create_message(db, chat_obj.id, chatData.message, 0, think_content="",tool_content=None,tool_name="")
-    message_out = Message.model_validate(message_obj)
-    return ResponseSchema.ok(message="创建聊天成功", data=message_out)
+    chat_out = ChatItem.model_validate(chat_obj)
+    return ResponseSchema.ok(message="创建聊天成功", data=chat_out)
 
 
 # 创建聊天
@@ -38,15 +36,14 @@ async def create_chat_router(
     db: Session = Depends(get_db),
     user: str = Depends(get_current_user)
 ):
-    chat_obj = create_chat(db, user, chatData.get("id"))
-    chat_id = chat_obj.id
-
-    message_obj = get_chat_messages(db, chat_id)
+    create_message(db, chatData.get("id"), chatData.get("message"), 0, "",None,"")
+    message_obj = get_chat_messages(db, chatData.get("id"))
+    message_out = [Message.model_validate(m) for m in message_obj]
     messages_for_llm = [
         {"role": "user" if msg.sender == 0 else "assistant", "content": msg.content}
-        for msg in message_obj
+        for msg in message_out
     ]
-
+    
     formal_content = ""
     think_content = ""
     tool_name = ""
@@ -85,7 +82,7 @@ async def create_chat_router(
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
         # 保存消息
-        create_message(db, chat_id, formal_content, 1, think_content,json.dumps(tool_content, ensure_ascii=False),tool_name)
+        create_message(db, chatData.get("id"), formal_content, 1, think_content,json.dumps(tool_content, ensure_ascii=False),tool_name)
         yield f"event: done\ndata: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

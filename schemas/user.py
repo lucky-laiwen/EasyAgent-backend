@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-
+from typing import Optional
 
 # 用于创建用户的请求参数
 class UserCreate(BaseModel):
@@ -20,7 +20,7 @@ class UserOut(BaseModel):
     name: str
     email: str
     created_at: datetime
-
+    avatar:str
     class Config:
         from_attributes = True
 
@@ -36,7 +36,13 @@ class User(BaseModel):
     class Config:
         from_attributes = True
 
-
+# 登录规范
 class LoginSchema(BaseModel):
     token: str
     user: UserOut
+
+# 更新用户资料
+class UserUpdate(BaseModel):
+    name: str
+    email: str
+    avatar: Optional[str] = None

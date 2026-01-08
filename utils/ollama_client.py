@@ -1,7 +1,9 @@
-from ollama import chat,ChatResponse
+from ollama import chat,ChatResponse,Client as ollama_client
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 import json
+
+# 主要聊天
 async def chat_with_ollama_stream(messages):
     search_result = ""
     full_messages = []
@@ -12,12 +14,17 @@ async def chat_with_ollama_stream(messages):
         "content": system_prompt
     }]
     full_messages += messages
-    # deepseek-r1:7b   qwen3:8b
-    response : ChatResponse = chat(
-        model='qwen3:8b', 
+    client = ollama_client(
+        host="https://ollama.com",
+        headers={'Authorization': '对应ollama的api key'}
+    )
+    
+    response : ChatResponse = client.chat(
+        model='gpt-oss:120b-cloud', 
         messages=full_messages,
         stream=True,
-        tools=[weather_query,web_search]
+        tools=[weather_query,web_search],
+        think=True
     )
     for chunk in response:
         if chunk.message.tool_calls:
@@ -43,18 +50,42 @@ async def chat_with_ollama_stream(messages):
                 "role": "tool",
                 "content": f"这是调用{tool_name}函数的结果：{search_result}"
             })
-            response = chat(
-                model='qwen3:8b', 
+            response = client.chat(
+                model='gpt-oss:120b-cloud', 
                 messages=full_messages,
                 stream=True,
                 tools=[weather_query,web_search],
                 think=False
             )
             for chunk in response:
-                yield chunk.get("message", {})
+                thinking = chunk.get("message", {}).get("thinking", False)
+                if not thinking:
+                    yield chunk.get("message", {})
 
         else:
             yield chunk.get("message", {})
+
+async def generate_chat_title(messages):
+    client = ollama_client(
+        host="https://ollama.com",
+        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
+    )
+    response = client.chat(
+        model='gpt-oss:120b-cloud', 
+        messages=[
+            {
+                "role": "system",
+                "content":"请用不超过20个字概括下面这句话的核心主题，作为聊天标题,其余一律不要生成"
+            },
+            {
+                "role": "user",
+                "content":messages
+            }
+        ],
+        stream=False,
+        think=False
+    )
+    return response.get("message",{}).get("content")
 
 async def weather_query(city:str):
     transport = StdioTransport(

@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # 配置数据库
-SQLALCHEMY_DATABASE_URL = 'mysql+mysqlconnector://root:root@localhost:3306/agent'
+SQLALCHEMY_DATABASE_URL = 'mysql+mysqlconnector://root:08180924@localhost:3306/easyagent'
 # 创建数据库引擎
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,

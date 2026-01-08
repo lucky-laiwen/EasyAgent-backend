@@ -11,12 +11,12 @@ def get_user_by_id(db:Session,user_id:int) -> bool:
     return True
 
 # 创建聊天
-def create_chat(db: Session, user_id: int, id: int) -> Optional[Chat]:
+def create_chat(db: Session, user_id: int, id: int,title:str) -> Optional[Chat]:
     if not get_user_by_id(db, user_id):
         return None
     is_have_chat = db.query(Chat).filter(Chat.id == id, Chat.user_id == user_id).first()
     if not is_have_chat:
-        chat = Chat(user_id=user_id, title= "问候")
+        chat = Chat(user_id=user_id, title= title)
         db.add(chat)
         db.commit()
         db.refresh(chat)

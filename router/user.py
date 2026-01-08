@@ -1,16 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, status , Request
+from fastapi import APIRouter, Depends, HTTPException, status , Request,UploadFile, File
 from crud import user as crud_user
-from schemas.user import User as UserSchema, UserCreate, UserOut ,UserLogin
+from schemas.user import UserUpdate, UserCreate, UserOut ,UserLogin
 from schemas.response import ResponseSchema
 from sqlalchemy.orm import Session
 from database import get_db
 from utils.utils import create_access_token, get_current_user
 from fastapi.security import OAuth2PasswordRequestForm
-
+from minio import Minio
+import io
 router = APIRouter(
     tags=['user'],
     prefix='/user',
 )
+
+client = Minio(
+    endpoint='127.0.0.1:9000',
+    access_key='admin',
+    secret_key='admin123456',
+    secure=False
+)
+
+bucket_name = "easy-agent"
+
+# 上传文件
+@router.post("/upload_file", response_model=ResponseSchema)
+async def upload_file(
+    file: UploadFile = File(...),
+    _: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        file_bytes = await file.read()
+
+        # 上传文件到 MinIO
+        client.put_object(
+            bucket_name=bucket_name,
+            object_name=file.filename,
+            data=io.BytesIO(file_bytes),
+            length=len(file_bytes),
+            content_type=file.content_type
+        )
+
+        # 生成可访问的文件 URL（带签名）
+        file_url = client.presigned_get_object(
+            bucket_name=bucket_name,
+            object_name=file.filename,
+        )
+
+        return ResponseSchema.ok(
+            message="upload_success",
+            data={"url": file_url}
+        )
+
+    except Exception as e:
+        return ResponseSchema.fail(message=str(e))
+
 
 # 获取用户
 @router.get("/get_user/{user_id}", response_model=UserOut)
@@ -107,11 +151,11 @@ async def logout_route(request:Request, db: Session = Depends(get_db), token: st
 
 # 更新用户
 @router.put("/update_user",response_model=ResponseSchema)
-async def update_route(user: UserCreate, request:Request, db: Session = Depends(get_db), user_data: str = Depends(get_current_user)):
+async def update_route(user: UserUpdate, request:Request, db: Session = Depends(get_db), user_data: str = Depends(get_current_user)):
     _ = request.state._
-    user_obj = crud_user.update_user(db=db, user_id=user_data, name=user.name, email=user.email, password=user.password)
+    user_obj = crud_user.update_user(db=db, user_id=user_data, name=user.name, email=user.email,avatar=user.avatar)
     if not user_obj:
-        raise HTTPException(status_code=404, detail=_("user_not_found"))
+        raise HTTPException(status_code=401, detail=_("user_not_found"))
     user_out = UserOut.model_validate(user_obj) 
     return ResponseSchema.ok(message=_("update_success"),data=user_out)
 
