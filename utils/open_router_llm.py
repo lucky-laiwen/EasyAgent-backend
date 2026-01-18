@@ -71,7 +71,7 @@ async def chat_with_openrouter_stream(messages):
     ]
 
     async with OpenRouter(
-        api_key="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"
+        api_key="111"
     ) as client:
 
         # 流式调用
@@ -84,7 +84,6 @@ async def chat_with_openrouter_stream(messages):
 
         async for event in stream:
             delta = event.choices[0].delta
-            print(event,11111111)
             # 1️⃣ reasoning
             if getattr(delta, "reasoning", None):
                 yield {

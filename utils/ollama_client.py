@@ -2,21 +2,23 @@ from ollama import chat,ChatResponse,Client as ollama_client
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 import json
-
+import time
+import asyncio
 # 主要聊天
 async def chat_with_ollama_stream(messages):
     search_result = ""
     full_messages = []
+    cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     with open(r"utils/optimizer_system_prompt.md", "r", encoding="utf-8") as f:
         system_prompt = f.read()
     full_messages = [{
         "role": "system",
-        "content": system_prompt
+        "content": system_prompt + f"当前时间为{cur_time}。"
     }]
     full_messages += messages
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': '对应ollama的api key'}
+        headers={'Authorization': '111'}
     )
     
     response : ChatResponse = client.chat(
@@ -48,16 +50,16 @@ async def chat_with_ollama_stream(messages):
 
             full_messages.append({
                 "role": "tool",
-                "content": f"这是调用{tool_name}函数的结果：{search_result}"
+                "content": f"这是调用{tool_name}函数的结果：{search_result['news'][1:10] if search_result.get('news') else search_result['text'][1:10]}"
             })
-            response = client.chat(
+
+            new_response = client.chat(
                 model='gpt-oss:120b-cloud', 
                 messages=full_messages,
                 stream=True,
-                tools=[weather_query,web_search],
                 think=False
             )
-            for chunk in response:
+            for chunk in new_response:
                 thinking = chunk.get("message", {}).get("thinking", False)
                 if not thinking:
                     yield chunk.get("message", {})
@@ -68,7 +70,7 @@ async def chat_with_ollama_stream(messages):
 async def generate_chat_title(messages):
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
+        headers={'Authorization': '111'}
     )
     response = client.chat(
         model='gpt-oss:120b-cloud', 
@@ -96,11 +98,22 @@ async def weather_query(city:str):
         result = await client.call_tool("weather_query", {"city": city})
         return result.content[0].text
     
-async def web_search(query:str):
-    transport = StdioTransport(
-        command="python",
-        args=["utils/server.py"]
-    )
-    async with Client(transport=transport) as client:
-        result = await client.call_tool("web_search", {"query": query})
-        return result.content[0].text
+async def web_search(query: str, max_retry: int = 3):
+    for _ in range(max_retry):
+        transport = StdioTransport(
+            command="python",
+            args=["utils/server.py"]
+        )
+
+        async with Client(transport=transport) as client:
+            result = await client.call_tool("web_search", {"query": query})
+
+            if result and getattr(result, "content", None):
+                text = getattr(result.content[0], "text", None)
+                if text:
+                    return json.loads(text)
+
+        await asyncio.sleep(0.5)
+
+    return "未查询到相关内容。"
+

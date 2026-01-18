@@ -15,8 +15,8 @@ router = APIRouter(
 
 client = Minio(
     endpoint='127.0.0.1:9000',
-    access_key='admin',
-    secret_key='admin123456',
+    access_key='minioadmin',
+    secret_key='minioadmin',
     secure=False
 )
 

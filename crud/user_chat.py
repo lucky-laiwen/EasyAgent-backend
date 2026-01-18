@@ -40,3 +40,33 @@ def update_message_status_utils(db: Session, message_id: int):
     db.commit()
     db.refresh(chat_message)
     return chat_message
+
+# 查询所有未读消息
+def get_unread_messages_utils(db: Session, user_id: int):
+    chat_messages = (
+    db.query(ChatMessage)
+        .filter(
+            and_(
+                ChatMessage.receiver_id == user_id,
+                ChatMessage.status == 0
+            )
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    return chat_messages
+
+# 查询所有用户接收到的消息
+def get_all_messages_utils(db: Session, user_id: int):
+    chat_messages = (
+    db.query(ChatMessage)
+        .filter(
+            or_(
+                ChatMessage.receiver_id == user_id,
+                ChatMessage.sender_id == user_id
+            )
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    return chat_messages

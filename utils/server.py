@@ -82,12 +82,19 @@ async def web_search(query: str):
         # 在子线程中调用同步搜索
         def search():
             with DDGS() as ddgs:
-                return list(ddgs.text(query, region="cn-zh", max_results=20))
+                text = list(ddgs.text(query, region="cn-zh", max_results=50))
+                imgs = list(ddgs.images(query, region="cn-zh", max_results=50))
+                news = list(ddgs.news(query, region="cn-zh", max_results=50))
+                return {
+                    "text": text,
+                    "imgs": imgs,
+                    "news": news
+                }
 
         results = await asyncio.to_thread(search)
 
         if not results:
-            return f"未找到与「{query}」相关的结果。"
+            return f"未查询到相关内容。"
 
         return results
 

@@ -70,5 +70,34 @@ async def main():
 
         print("机器人回复",response)
 
+from duckduckgo_search import DDGS
+from pprint import pprint
+
+def ddk_search():
+    try:
+        with DDGS() as ddgs:
+            pprint([r for r in ddgs.text("CHATGPT", region='cn-zh', max_results=20)])
+            pprint([r for r in ddgs.images("CHATGPT", region='cn-zh', max_results=20)])
+            pprint([r for r in ddgs.news("CHATGPT", region='cn-zh', max_results=20)])
+    except Exception as e:
+            print(e,"ddk_search")
+
+async def web_search(query: str):
+    transport = StdioTransport(
+        command="python",
+        args=["utils/server.py"]
+    )
+    async with Client(transport=transport) as client:
+        result = await client.call_tool("web_search", {"query": query})
+        # 安全处理：确保 content 存在且至少有一条
+        if result and getattr(result, "content", None) and len(result.content) > 0:
+            # 获取第一个 TextContent 对象
+            text_content_obj = result.content[0]
+            # 取 text 属性
+            text_content_str = getattr(text_content_obj, "text", None)
+            if text_content_str:
+                res_dict = json.loads(text_content_str)
+                print(res_dict, 909090)
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(web_search("CHATGPT"))

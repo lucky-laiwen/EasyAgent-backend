@@ -1,7 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect,Depends
 from schemas.user_chat import SendUserChat,UserChat,historyUserChat,ChatMessage
 from utils.utils import get_current_user
-from crud.user_chat import send_user_message,get_chat_history,update_message_status_utils
+from crud.user_chat import send_user_message,get_chat_history,update_message_status_utils,get_unread_messages_utils,get_all_messages_utils
 from sqlalchemy.orm import Session
 from database import get_db
 from schemas.response import ResponseSchema
@@ -97,3 +97,21 @@ async def get_chat_history_api(receiver_id:int, token: str = Depends(get_current
         return ResponseSchema.fail(message="获取失败",data=None)
     chat_history_obj = [UserChat.model_validate(chat_message) for chat_message in chat_history]
     return ResponseSchema.ok(message="获取成功",data=chat_history_obj)
+
+# 查询所有未读消息
+@router.get("/get_unread_messages",response_model=ResponseSchema)
+async def get_unread_messages(token: str = Depends(get_current_user),db: Session = Depends(get_db)):
+    unread_messages = get_unread_messages_utils(db=db,user_id=token)
+    if not unread_messages:
+        return ResponseSchema.fail(message="获取失败",data=None)
+    unread_messages_obj = [UserChat.model_validate(unread_message) for unread_message in unread_messages]
+    return ResponseSchema.ok(message="获取成功",data=unread_messages_obj)
+
+# 查询全部用户接收到的消息
+@router.get("/get_all_messages",response_model=ResponseSchema)
+async def get_all_messages(token: str = Depends(get_current_user),db: Session = Depends(get_db)):
+    all_messages = get_all_messages_utils(db=db,user_id=token)
+    if not all_messages:    
+        return ResponseSchema.fail(message="获取失败",data=None)
+    all_messages_obj = [UserChat.model_validate(all_message) for all_message in all_messages]
+    return ResponseSchema.ok(message="获取成功",data=all_messages_obj)
