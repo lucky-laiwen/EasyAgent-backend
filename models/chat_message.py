@@ -12,6 +12,7 @@ class ChatMessage(Base):
     status = Column(SmallInteger, default=0, comment='0=未读,1=已读')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    share_chat_id = Column(Integer)
 
     # 这里不直接导入 User，使用字符串形式
     sender = relationship("User", foreign_keys=[sender_id], back_populates="sent_messages")

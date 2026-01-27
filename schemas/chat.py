@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field , field_serializer
 from datetime import datetime
+from typing import Optional
 # 创建聊天
 class CreateChat(BaseModel):
     id: int = Field(..., description="聊天id")
@@ -15,6 +16,19 @@ class ChatItem(BaseModel):
     created_at:datetime = Field(..., description="创建时间")
     class Config:
         from_attributes = True
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime, _info):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    
+class AllChatItem(BaseModel):
+    id: int = Field(..., description="聊天id")
+    title: str = Field(..., description="聊天标题")
+    created_at: datetime = Field(..., description="创建时间")
+    source: Optional[str] = Field(None, description="聊天来源：own(自己的) 或 shared(分享的)")  # 新增字段
+    
+    class Config:
+        from_attributes = True
+        
     @field_serializer("created_at")
     def serialize_created_at(self, value: datetime, _info):
         return value.strftime("%Y-%m-%d %H:%M:%S")

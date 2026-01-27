@@ -6,7 +6,8 @@ import time
 import asyncio
 # 主要聊天
 async def chat_with_ollama_stream(messages):
-    search_result = ""
+    weather_search_result = ""
+    web_search_result = {}
     full_messages = []
     cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     with open(r"utils/optimizer_system_prompt.md", "r", encoding="utf-8") as f:
@@ -39,18 +40,23 @@ async def chat_with_ollama_stream(messages):
                 try:
                     res_str = await weather_query(param)  
                     res = json.loads(res_str)              
-                    search_result = res["modal_data"]
+                    weather_search_result = res["modal_data"]
                     yield {"type": "tool_mid", "tool": tool_name, "tool_content": res["full_data"]}
                 except Exception as e:
                     print("调用 weather_query 出错:", e)
-                    search_result = ""
+                    weather_search_result = ""
             elif tool_name == "web_search":
-                search_result = await web_search(param)
-                yield {"type": "tool_mid", "tool": tool_name, "tool_content": search_result}
+                web_search_result = await web_search(param)
+                yield {"type": "tool_mid", "tool": tool_name, "tool_content": web_search_result}
 
             full_messages.append({
                 "role": "tool",
-                "content": f"这是调用{tool_name}函数的结果：{search_result['news'][1:10] if search_result.get('news') else search_result['text'][1:10]}"
+                "content": f"这是调用{tool_name}函数的结果：{
+                    web_search_result['news'][1:10] if isinstance(web_search_result, dict) and 'news' in web_search_result 
+                    else web_search_result['text'][1:10] if isinstance(web_search_result, dict) and 'text' in web_search_result 
+                    else str(web_search_result) if tool_name == "web_search" 
+                    else weather_search_result
+                }"
             })
 
             new_response = client.chat(

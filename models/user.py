@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, func
 from sqlalchemy.orm import relationship
 from database import Base
-from models.chat_message import ChatMessage
+
 class User(Base):
     __tablename__ = 'user'
 
@@ -16,19 +16,37 @@ class User(Base):
     # Chat 的关系
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
 
-    # ChatMessage 的关系，使用字符串延迟绑定
+    # ChatMessage 的关系 - 需要添加级联删除
     sent_messages = relationship(
         "ChatMessage",
-        foreign_keys=ChatMessage.sender_id,
+        foreign_keys="ChatMessage.sender_id",
         back_populates="sender",
         cascade="all, delete-orphan"
     )
 
     received_messages = relationship(
         "ChatMessage",
-        foreign_keys=ChatMessage.receiver_id,
+        foreign_keys="ChatMessage.receiver_id",
         back_populates="receiver",
         cascade="all, delete-orphan"
     )
 
-    
+    # ChatShare 的关系 - 需要添加级联删除
+    owned_shares = relationship("ChatShare", foreign_keys="ChatShare.owner_id", 
+                              back_populates="owner", cascade="all, delete-orphan")
+    share_received = relationship("ChatShare", foreign_keys="ChatShare.shared_to_id", 
+                                back_populates="shared_to_user", cascade="all, delete-orphan")
+
+    # UserFriend 关系 - 可能需要考虑
+    sent_friend_requests = relationship(
+        "UserFriend", 
+        foreign_keys="UserFriend.user_id", 
+        back_populates="user", 
+        cascade="all, delete-orphan"
+    )
+    received_friend_requests = relationship(
+        "UserFriend", 
+        foreign_keys="UserFriend.friend_id", 
+        back_populates="friend", 
+        cascade="all, delete-orphan"
+    )

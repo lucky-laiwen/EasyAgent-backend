@@ -3,8 +3,8 @@ from sqlalchemy import or_, and_
 from models.chat_message import ChatMessage
 
 # 发送信息
-def send_user_message(db:Session,receiver_id:int,sender_id:int,content:str):
-    chat_message = ChatMessage(sender_id=sender_id,receiver_id=receiver_id,content=content)
+def send_user_message(db:Session,receiver_id:int,sender_id:int,content:str,share_chat_id:int | None = None):
+    chat_message = ChatMessage(sender_id=sender_id,receiver_id=receiver_id,content=content,share_chat_id=share_chat_id)
     db.add(chat_message)
     db.commit() 
     db.refresh(chat_message)
@@ -69,4 +69,14 @@ def get_all_messages_utils(db: Session, user_id: int):
         .order_by(ChatMessage.created_at.asc())
         .all()
     )
+    return chat_messages
+
+# 将分享的id置空
+def update_chat_share_id(db: Session, chat_id: int):
+    chat_messages = db.query(ChatMessage).filter(ChatMessage.id == chat_id).first()
+    if not chat_messages:
+        return None
+    chat_messages.share_chat_id = None
+    db.commit()
+    db.refresh(chat_messages)
     return chat_messages

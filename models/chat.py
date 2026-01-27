@@ -12,3 +12,4 @@ class Chat(Base):
     # ✅ 反向关联
     user = relationship("User", back_populates="chats")
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan")
+    shares = relationship("ChatShare", back_populates="chat", cascade="all, delete-orphan")

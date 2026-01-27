@@ -38,7 +38,7 @@ async def weather_query(city: str):
 
 async def main():
     async with OpenRouter(
-        api_key="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"
+        api_key="111"
     ) as client:
 
         response = await client.chat.send_async(
@@ -82,22 +82,23 @@ def ddk_search():
     except Exception as e:
             print(e,"ddk_search")
 
-async def web_search(query: str):
-    transport = StdioTransport(
-        command="python",
-        args=["utils/server.py"]
-    )
-    async with Client(transport=transport) as client:
-        result = await client.call_tool("web_search", {"query": query})
-        # 安全处理：确保 content 存在且至少有一条
-        if result and getattr(result, "content", None) and len(result.content) > 0:
-            # 获取第一个 TextContent 对象
-            text_content_obj = result.content[0]
-            # 取 text 属性
-            text_content_str = getattr(text_content_obj, "text", None)
-            if text_content_str:
-                res_dict = json.loads(text_content_str)
-                print(res_dict, 909090)
+async def web_search(query: str, max_retry: int = 3):
+    for i in range(max_retry):
+        try:
+            transport = StdioTransport(
+                command="python",
+                args=["utils/server.py"]
+            )
+
+            async with Client(transport=transport) as client:
+                result = await client.call_tool("web_search", {"query": query})
+                return result
+
+        except Exception as e:
+            print(f"第 {i+1} 次查询失败：{e}")
+            await asyncio.sleep(0.5)
+
+    print("未查询到相关内容")
 
 if __name__ == "__main__":
     asyncio.run(web_search("CHATGPT"))

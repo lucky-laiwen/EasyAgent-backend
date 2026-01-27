@@ -1,11 +1,11 @@
-import asyncio
 from fastapi import APIRouter,Depends
 from fastapi.responses import StreamingResponse
 from utils.utils import get_current_user
-from schemas.chat import CreateChat , ChatItem
+from schemas.chat import CreateChat , ChatItem , AllChatItem
 from schemas.messages import Message
 from crud.chat import create_chat,get_chat_by_user_id,update_chat_title,delete_chat
 from crud.messages import create_message,get_chat_messages
+from crud.chat_share import cancel_chat_share_api
 from schemas.response import ResponseSchema
 from database import get_db
 from sqlalchemy.orm import Session
@@ -94,12 +94,15 @@ async def get_chat_list_router(db:Session = Depends(get_db), user: str = Depends
     chat_list =get_chat_by_user_id(db,user_id,page_size,last_id)
     if not chat_list:
         return ResponseSchema.fail(message="查询聊天列表失败",data=None)
-    chat_list_out = [ChatItem.model_validate(chat) for chat in chat_list["data"]]
+    chat_list_out = [AllChatItem.model_validate(chat) for chat in chat_list["data"]]
+
     return ResponseSchema.ok(message="查询聊天列表成功",data={"chat_list":chat_list_out,"next_last_id":chat_list["next_last_id"]})
 
 @router.get('/get_chat_message/{chat_id}',response_model=ResponseSchema)
 async def get_chat_message_router(chat_id:int,db:Session = Depends(get_db), _: str = Depends(get_current_user)):
     chat_obj = get_chat_messages(db,chat_id)
+    if not chat_obj:
+        return ResponseSchema.fail(message="查询聊天消息失败",data=None)
     chat_out = [Message.model_validate(message, from_attributes=True) for message in chat_obj]
     return ResponseSchema.ok(message="查询聊天消息成功",data=chat_out)
 
@@ -119,3 +122,12 @@ async def delete_chat_router(chat_id:int,db:Session = Depends(get_db), user: str
     if not chat:
         return ResponseSchema.fail(message="删除聊天失败",data=None)
     return ResponseSchema.ok(message="删除聊天成功",data=None)
+
+
+# 被分享者取消分享
+@router.get("/cancel_share/{share_id}",response_model=ResponseSchema)
+async def cancel_share(share_id:int , user_id: str = Depends(get_current_user),db: Session = Depends(get_db)):
+    chat_share = cancel_chat_share_api(db=db,chat_share_id=share_id,user_id=user_id)
+    if not chat_share:    
+        return ResponseSchema.fail(message="取消失败",data=None)
+    return ResponseSchema.ok(message="已取消分享",data=None)

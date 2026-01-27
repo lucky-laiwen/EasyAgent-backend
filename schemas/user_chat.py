@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
+from schemas.chat_share import ChatShare
 class UserChat(BaseModel):
     id: int
     sender_id: int
@@ -8,6 +10,8 @@ class UserChat(BaseModel):
     status: int
     created_at: datetime
     updated_at: datetime
+    share_chat_id: Optional[int] = None
+    share_chat: ChatShare | None = None
     class Config:
         from_attributes = True
 

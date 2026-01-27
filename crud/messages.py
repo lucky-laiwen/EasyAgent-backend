@@ -24,6 +24,6 @@ def create_message(db: Session, chat_id: int, content: str ,sender: int, think_c
 def get_chat_messages(db: Session, chat_id: int) -> Optional[Chat]:
     chat = db.query(Chat).filter(Chat.id == chat_id).first()
     if not chat:
-        return []
+        return None
     messages = chat.messages
     return list(messages)   
