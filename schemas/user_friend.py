@@ -32,3 +32,6 @@ class UserFriendOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class AddFriendSchema(BaseModel):
+    friend_id: int

@@ -19,11 +19,11 @@ async def chat_with_ollama_stream(messages):
     full_messages += messages
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': '111'}
+        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
     )
     
     response : ChatResponse = client.chat(
-        model='gpt-oss:120b-cloud', 
+        model='qwen3.5:397b-cloud', 
         messages=full_messages,
         stream=True,
         tools=[weather_query,web_search],
@@ -60,11 +60,12 @@ async def chat_with_ollama_stream(messages):
             })
 
             new_response = client.chat(
-                model='gpt-oss:120b-cloud', 
+                model='qwen3.5:397b-cloud', 
                 messages=full_messages,
                 stream=True,
                 think=False
             )
+            
             for chunk in new_response:
                 thinking = chunk.get("message", {}).get("thinking", False)
                 if not thinking:
@@ -76,10 +77,10 @@ async def chat_with_ollama_stream(messages):
 async def generate_chat_title(messages):
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': '111'}
+        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
     )
     response = client.chat(
-        model='gpt-oss:120b-cloud', 
+        model='qwen3.5:397b-cloud', 
         messages=[
             {
                 "role": "system",

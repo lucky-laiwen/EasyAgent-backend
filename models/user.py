@@ -50,3 +50,6 @@ class User(Base):
         back_populates="friend", 
         cascade="all, delete-orphan"
     )
+
+    # SystemMessage 的关系
+    system_messages = relationship("SystemMessage", back_populates="user", cascade="all, delete-orphan")

@@ -44,5 +44,5 @@ def verify_password(plain_password, hashed_password):
 def get_current_user(token: str = Depends(bearer_token)):
     payload = decode_token(token)
     user_id = payload.get("sub")
-    return user_id
+    return int(user_id)
      

@@ -92,6 +92,8 @@ async def web_search(query: str, max_retry: int = 3):
 
             async with Client(transport=transport) as client:
                 result = await client.call_tool("web_search", {"query": query})
+                print("=== web_search 原始返回 ===")
+                print(result)
                 return result
 
         except Exception as e:

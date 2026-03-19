@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect,Depends
 from schemas.chat_share import ChatShare
 from schemas.user_chat import SendUserChat,UserChat,historyUserChat,ChatMessage
+from schemas.user_friend import UserFriend
 from utils.utils import get_current_user
 from crud.user_chat import send_user_message,get_chat_history,update_message_status_utils,get_unread_messages_utils,get_all_messages_utils,update_chat_share_id
 from crud.chat_share import create_chat_share,accept_chat_share_api,get_chat_share_api
@@ -12,6 +13,7 @@ from utils.connection_manager import manager
 from database import SessionLocal
 from crud.chat import get_chat_by_id
 from schemas.chat import ChatItem
+from crud.user_friend import confirm_friend_utils
 router = APIRouter(
     tags=["User Chat"],
     prefix="/user_chat"
@@ -69,6 +71,29 @@ async def chat_ws(websocket: WebSocket, user_id: int):
                     )
                 else:
                     manager.disconnect(user_id)
+            
+            elif data.get("type", None) == "add_friend":
+                add_friend_info = data["content"]
+                add_friend_info["type"] = 'add_friend'
+                print(add_friend_info,909090)
+                await manager.send_private_message(
+                    to_user_id=data["to_user_id"],
+                    message=add_friend_info
+                )
+
+            elif data.get("type", None) == "confirm_friend":
+                with SessionLocal() as db:
+                    confirm_friend = confirm_friend_utils(db, user_id, data["to_user_id"])
+                    if confirm_friend:
+                        confirm_friend_obj = UserFriend.model_validate(confirm_friend).model_dump()
+                        for key, value in confirm_friend_obj.items():
+                                if isinstance(value, datetime):
+                                    confirm_friend_obj[key] = value.isoformat()
+                        confirm_friend_obj['type'] = 'confirm_friend'
+                        await manager.send_private_message(
+                            to_user_id=data["to_user_id"],
+                            message=confirm_friend_obj
+                        )
             
             else:
                 with SessionLocal() as db:
