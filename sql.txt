@@ -1,0 +1,97 @@
+-- 下属为此项目所需要的全部数据库，粘贴到数据库管理工具(Navicat DataGrip)运行即可
+-- 创建数据库（如果尚未创建）
+CREATE DATABASE IF NOT EXISTS agent;
+USE agent;
+
+-- 1. user 表（无外键依赖）
+CREATE TABLE user (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    is_active INT DEFAULT 0,
+    avatar VARCHAR(500) DEFAULT 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_id (id)
+);
+
+-- 2. chat 表（依赖 user）
+CREATE TABLE chat (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    title TEXT,
+    user_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_chat_id (id),
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 3. messages 表（依赖 chat）
+CREATE TABLE messages (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    chat_id INT NOT NULL,
+    sender TINYINT NOT NULL COMMENT '0=user, 1=ai',
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    think_content TEXT,
+    tool_content TEXT,
+    tool_name CHAR(50),
+    INDEX idx_messages_id (id),
+    FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE
+);
+
+-- 4. chat_message 表（依赖 user）
+CREATE TABLE chat_message (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    sender_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    content TEXT NOT NULL,
+    status TINYINT DEFAULT 0 COMMENT '0=未读,1=已读',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    share_chat_id INT,
+    INDEX idx_chat_message_id (id),
+    FOREIGN KEY (sender_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 5. chat_share 表（依赖 chat 和 user）
+CREATE TABLE chat_share (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    chat_id INT NOT NULL,
+    owner_id INT NOT NULL,
+    shared_to_id INT NOT NULL,
+    permission INT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_chat_share_id (id),
+    FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (shared_to_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 6. user_friend 表（依赖 user）
+CREATE TABLE user_friend (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    friend_id INT NOT NULL,
+    status TINYINT DEFAULT 0 COMMENT '0=待确认,1=已确认,2=被拉黑',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_friend_id (id),
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (friend_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 7. system_message 表（依赖 user）
+CREATE TABLE system_message (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    source_id INT,
+    title VARCHAR(255),
+    content TEXT,
+    is_read INT DEFAULT 0,
+    action_type INT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_system_message_id (id),
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_id) REFERENCES user(id) ON DELETE CASCADE
+);

@@ -19,7 +19,7 @@ async def chat_with_ollama_stream(messages):
     full_messages += messages
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
+        headers={'Authorization': '111'}
     )
     
     response : ChatResponse = client.chat(
@@ -51,12 +51,12 @@ async def chat_with_ollama_stream(messages):
 
             full_messages.append({
                 "role": "tool",
-                "content": f"这是调用{tool_name}函数的结果：{
-                    web_search_result['news'][1:10] if isinstance(web_search_result, dict) and 'news' in web_search_result 
-                    else web_search_result['text'][1:10] if isinstance(web_search_result, dict) and 'text' in web_search_result 
-                    else str(web_search_result) if tool_name == "web_search" 
-                    else weather_search_result
-                }"
+                "content": f"""这是调用{tool_name}函数的结果：{
+                web_search_result['news'][1:10] if isinstance(web_search_result, dict) and 'news' in web_search_result 
+                else web_search_result['text'][1:10] if isinstance(web_search_result, dict) and 'text' in web_search_result 
+                else str(web_search_result) if tool_name == "web_search" 
+                else weather_search_result
+                }"""
             })
 
             new_response = client.chat(
@@ -77,7 +77,7 @@ async def chat_with_ollama_stream(messages):
 async def generate_chat_title(messages):
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': 'bede7a62497b4316adef41f8cb4dfb7e.6qjsZv3RxGTfmOApCgmhU01z'}
+        headers={'Authorization': '111'}
     )
     response = client.chat(
         model='qwen3.5:397b-cloud', 

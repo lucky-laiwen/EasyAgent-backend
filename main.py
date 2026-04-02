@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from router import user, chat, user_chat, user_friend
+from router import user, chat, user_chat, user_friend , system_message
 from utils.i18n import i18n_middleware
 from database import init_db
 
@@ -38,3 +38,4 @@ app.include_router(user.router)
 app.include_router(chat.router)
 app.include_router(user_chat.router)
 app.include_router(user_friend.router)
+app.include_router(system_message.router)

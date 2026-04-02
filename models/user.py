@@ -51,5 +51,17 @@ class User(Base):
         cascade="all, delete-orphan"
     )
 
-    # SystemMessage 的关系
-    system_messages = relationship("SystemMessage", back_populates="user", cascade="all, delete-orphan")
+    # SystemMessage 的关系（接收方）
+    system_messages = relationship(
+        "SystemMessage",
+        foreign_keys="SystemMessage.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    # SystemMessage 的关系（来源方）
+    source_system_messages = relationship(
+        "SystemMessage",
+        foreign_keys="SystemMessage.source_id",
+        back_populates="source_user"
+    )

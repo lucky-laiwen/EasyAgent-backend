@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect,Depends
 from schemas.chat_share import ChatShare
 from schemas.user_chat import SendUserChat,UserChat,historyUserChat,ChatMessage
+from schemas.system_message import SystemMessage
 from schemas.user_friend import UserFriend
 from utils.utils import get_current_user
 from crud.user_chat import send_user_message,get_chat_history,update_message_status_utils,get_unread_messages_utils,get_all_messages_utils,update_chat_share_id
@@ -14,6 +15,7 @@ from database import SessionLocal
 from crud.chat import get_chat_by_id
 from schemas.chat import ChatItem
 from crud.user_friend import confirm_friend_utils
+from crud.system_message import create_system_message,update_system_message_status
 router = APIRouter(
     tags=["User Chat"],
     prefix="/user_chat"
@@ -75,21 +77,36 @@ async def chat_ws(websocket: WebSocket, user_id: int):
             elif data.get("type", None) == "add_friend":
                 add_friend_info = data["content"]
                 add_friend_info["type"] = 'add_friend'
-                print(add_friend_info,909090)
-                await manager.send_private_message(
-                    to_user_id=data["to_user_id"],
-                    message=add_friend_info
-                )
-
-            elif data.get("type", None) == "confirm_friend":
                 with SessionLocal() as db:
-                    confirm_friend = confirm_friend_utils(db, user_id, data["to_user_id"])
+                    res = create_system_message(
+                        db=db,
+                        title="好友请求",
+                        content=f"用户{add_friend_info['name']}请求添加您为好友",
+                        user_id=data["to_user_id"],
+                        action_type=0,
+                        source_id=user_id
+                    )
+                    if res:
+                        res_dict = SystemMessage.model_validate(res).model_dump()
+                        for key, value in res_dict.items():
+                            if isinstance(value, datetime):
+                                res_dict[key] = value.isoformat()
+                        res_dict['type'] = 'add_friend'
+                        await manager.send_private_message(
+                            to_user_id=data["to_user_id"],
+                            message=res_dict
+                        )
+
+            elif data.get("type", None) == "accept_friend_request":
+                with SessionLocal() as db:
+                    confirm_friend = confirm_friend_utils(db, data["to_user_id"],user_id)
                     if confirm_friend:
+                        update_system_message_status(db, data["message_id"], data["title"], data["content"],data["action_type"])
                         confirm_friend_obj = UserFriend.model_validate(confirm_friend).model_dump()
                         for key, value in confirm_friend_obj.items():
                                 if isinstance(value, datetime):
                                     confirm_friend_obj[key] = value.isoformat()
-                        confirm_friend_obj['type'] = 'confirm_friend'
+                        confirm_friend_obj['type'] = 'accept_friend_request'
                         await manager.send_private_message(
                             to_user_id=data["to_user_id"],
                             message=confirm_friend_obj

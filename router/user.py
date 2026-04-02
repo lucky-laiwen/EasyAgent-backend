@@ -15,8 +15,8 @@ router = APIRouter(
 
 client = Minio(
     endpoint='127.0.0.1:9000',
-    access_key='minioadmin',
-    secret_key='minioadmin',
+    access_key='admin',
+    secret_key='12345678',
     secure=False
 )
 
@@ -57,9 +57,13 @@ async def upload_file(
 
 
 # 获取用户
-@router.get("/get_user/{user_id}", response_model=UserOut)
+@router.get("/get_user/{user_id}", response_model=ResponseSchema)
 async def get_user_by_id(user_id: int, db: Session = Depends(get_db),_: str = Depends(get_current_user)):
-    return crud_user.get_user(db=db, user_id=user_id)
+    user = crud_user.get_user(db=db, user_id=user_id)
+    if not user:
+        return ResponseSchema.fail(message="user_not_found")
+    user_out = UserOut.model_validate(user)
+    return ResponseSchema.ok(message="get_user_success",data=user_out)
 
 # 获取所有用户
 @router.get("/query_All", response_model=list[UserOut])

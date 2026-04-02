@@ -23,6 +23,10 @@ class SystemMessage(Base):
         ForeignKey("user.id", ondelete="CASCADE")
     )
 
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"),
+    )
+
     title: Mapped[str | None] = mapped_column(
         String(255)
     )
@@ -45,5 +49,12 @@ class SystemMessage(Base):
     # 反向关联
     user: Mapped["User"] = relationship(
         "User",
+        foreign_keys=[user_id],
         back_populates="system_messages"
+    )
+
+    source_user: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[source_id],
+        back_populates="source_system_messages"
     )
