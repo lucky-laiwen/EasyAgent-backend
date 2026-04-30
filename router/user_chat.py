@@ -216,7 +216,6 @@ async def accept_share(share_id:int , token: str = Depends(get_current_user),db:
     chat_share = accept_chat_share_api(db=db,chat_share_id=share_id)
     if not chat_share:    
         return ResponseSchema.fail(message="获取失败",data=None)
-    print(chat_share,909090)
     return ResponseSchema.ok(message="已同意接受",data=None)
 
     

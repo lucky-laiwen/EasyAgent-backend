@@ -9,9 +9,9 @@ from crud.chat_share import cancel_chat_share_api
 from schemas.response import ResponseSchema
 from database import get_db
 from sqlalchemy.orm import Session
-from utils.ollama_client import chat_with_ollama_stream , generate_chat_title
+# from utils.ollama_client import chat_with_ollama_stream,generate_chat_title
 import json
-from utils.open_router_llm import chat_with_openrouter_stream
+from utils.langchain_client import chat_stream,generate_chat_title
 router = APIRouter(
     prefix="/chat",
     tags=["chat"]
@@ -51,7 +51,7 @@ async def create_chat_router(
     async def event_generator():
         nonlocal formal_content, think_content,tool_content,tool_name
         try:
-            async for chunk in chat_with_ollama_stream(messages_for_llm):
+            async for chunk in chat_stream(messages_for_llm):
                 if not chunk:
                     continue
 
@@ -59,7 +59,7 @@ async def create_chat_router(
                 content = chunk.get("content")
 
                 if chunk.get("type") == "tool_start":
-                    tool_name+=chunk['tool']
+                    tool_name = chunk['tool']
                     yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': tool_name})}\n\n"
 
                 if chunk.get("type") == "tool_mid":
@@ -74,10 +74,10 @@ async def create_chat_router(
 
                 if thinking:
                     think_content += thinking
-                    yield f"data: {json.dumps({'content': thinking, 'type': 'think'})}\n\n"
+                    yield f"data: {json.dumps({'content': thinking, 'type': 'think'},ensure_ascii=False)}\n\n"
                 elif content is not None:
                     formal_content += content
-                    yield f"data: {json.dumps({'content': content, 'type': 'text'})}\n\n"
+                    yield f"data: {json.dumps({'content': content, 'type': 'text'},ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 

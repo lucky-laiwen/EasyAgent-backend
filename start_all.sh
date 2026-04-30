@@ -7,9 +7,6 @@ uvicorn main:app --reload &
 
 # utils 服务
 cd utils
-python server.py &
-cd ..
-
 # MinIO
 ./start-minio-macos.sh &
 

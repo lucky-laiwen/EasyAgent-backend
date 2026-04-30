@@ -4,6 +4,8 @@ from fastmcp.client.transports import StdioTransport
 import json
 import time
 import asyncio
+import os
+
 # 主要聊天
 async def chat_with_ollama_stream(messages):
     weather_search_result = ""
@@ -19,11 +21,11 @@ async def chat_with_ollama_stream(messages):
     full_messages += messages
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': '111'}
+        headers={'Authorization': os.getenv('OLLAMA_API_KEY')}
     )
     
     response : ChatResponse = client.chat(
-        model='qwen3.5:397b-cloud', 
+        model='minimax-m2.7:cloud', 
         messages=full_messages,
         stream=True,
         tools=[weather_query,web_search],
@@ -60,7 +62,7 @@ async def chat_with_ollama_stream(messages):
             })
 
             new_response = client.chat(
-                model='qwen3.5:397b-cloud', 
+                model='minimax-m2.7:cloud', 
                 messages=full_messages,
                 stream=True,
                 think=False
@@ -77,10 +79,10 @@ async def chat_with_ollama_stream(messages):
 async def generate_chat_title(messages):
     client = ollama_client(
         host="https://ollama.com",
-        headers={'Authorization': '111'}
+        headers={'Authorization': os.getenv('OLLAMA_API_KEY')}
     )
     response = client.chat(
-        model='qwen3.5:397b-cloud', 
+        model='minimax-m2.7:cloud', 
         messages=[
             {
                 "role": "system",
