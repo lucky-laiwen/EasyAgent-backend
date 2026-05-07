@@ -1,17 +1,16 @@
-from fastapi import APIRouter,Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from utils.utils import get_current_user
-from schemas.chat import CreateChat , ChatItem , AllChatItem
-from schemas.messages import Message
-from crud.chat import create_chat,get_chat_by_user_id,update_chat_title,delete_chat
-from crud.messages import create_message,get_chat_messages
+from schemas.chat import CreateChat, ChatItem, AllChatItem
+from schemas.messages import Message, ToolCallResponse
+from crud.chat import create_chat, get_chat_by_user_id, update_chat_title, delete_chat
+from crud.messages import create_message, get_chat_messages, add_tool_call, update_tool_message, get_tool_call_by_id
 from crud.chat_share import cancel_chat_share_api
 from schemas.response import ResponseSchema
 from database import get_db
 from sqlalchemy.orm import Session
-# from utils.ollama_client import chat_with_ollama_stream,generate_chat_title
 import json
-from utils.langchain_client import chat_stream,generate_chat_title
+from utils.langchain_client import chat_stream, generate_chat_title
 router = APIRouter(
     prefix="/chat",
     tags=["chat"]
@@ -36,20 +35,22 @@ async def create_chat_router(
     db: Session = Depends(get_db),
     user: str = Depends(get_current_user)
 ):
-    create_message(db, chatData.get("id"), chatData.get("message"), 0, "",None,"")
+    create_message(db, chatData.get("id"), chatData.get("message"), 0)
     message_obj = get_chat_messages(db, chatData.get("id"))
     message_out = [Message.model_validate(m) for m in message_obj]
     messages_for_llm = [
         {"role": "user" if msg.sender == 0 else "assistant", "content": msg.content}
         for msg in message_out
     ]
-    
+
     formal_content = ""
     think_content = ""
-    tool_name = ""
-    tool_content = []
+    tool_calls_data = []  # 存储多个工具调用
+    current_tool_name = ""
+    current_tool_content = ""
+
     async def event_generator():
-        nonlocal formal_content, think_content,tool_content,tool_name
+        nonlocal formal_content, think_content, tool_calls_data, current_tool_name, current_tool_content 
         try:
             async for chunk in chat_stream(messages_for_llm):
                 if not chunk:
@@ -59,30 +60,39 @@ async def create_chat_router(
                 content = chunk.get("content")
 
                 if chunk.get("type") == "tool_start":
-                    tool_name = chunk['tool']
-                    yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': tool_name})}\n\n"
+                    # 新的工具调用开始
+                    current_tool_name = chunk['tool']
+                    tool_obj = add_tool_call(db=db, message_id=chatData.get("id"), tool_name=chunk['tool'], tool_input=chunk['args'])
+                    tool_obj_out = ToolCallResponse.model_validate(tool_obj)
+                    tool_calls_data.append(tool_obj_out)
+                    current_tool_content = ""
+                    yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': current_tool_name})}\n\n"
 
                 if chunk.get("type") == "tool_mid":
                     tool_content_str = chunk.get("tool_content")
                     try:
-                        tool_content = json.loads(tool_content_str)
+                        current_tool_content = json.dumps(json.loads(tool_content_str), ensure_ascii=False)
+                        res_obj = update_tool_message(db=db, tool_call_id=tool_obj_out.id, tool_content=current_tool_content)
+                        res_obj_out = ToolCallResponse.model_validate(res_obj)
+                        res_obj_out["message_id"] = chatData.get("id")
                     except (TypeError, json.JSONDecodeError):
-                        tool_content = tool_content_str  # 回退为原始值
-
-                    yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': tool_content}, ensure_ascii=False)}\n\n"
-
+                        current_tool_content = str(tool_content_str)
+                        res_obj_out = ToolCallResponse.model_validate(res_obj)
+                        res_obj_out["message_id"] = chatData.get("id")
+                    yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': res_obj_out}, ensure_ascii=False)}\n\n"
 
                 if thinking:
                     think_content += thinking
-                    yield f"data: {json.dumps({'content': thinking, 'type': 'think'},ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'content': thinking, 'type': 'think'}, ensure_ascii=False)}\n\n"
                 elif content is not None:
                     formal_content += content
-                    yield f"data: {json.dumps({'content': content, 'type': 'text'},ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'content': content, 'type': 'text'}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
         # 保存消息
-        create_message(db, chatData.get("id"), formal_content, 1, think_content,json.dumps(tool_content, ensure_ascii=False),tool_name)
+        create_message(db, chatData.get("id"), formal_content, 1, think_content)
+                
         yield f"event: done\ndata: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

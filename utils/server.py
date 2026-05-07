@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 from fastmcp import FastMCP
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from datetime import datetime
 import json
 mcp = FastMCP("Web Search & Weather MCP")
