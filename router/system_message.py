@@ -16,8 +16,8 @@ async def get_system_messages_router(db: Session = Depends(get_db), user: str = 
     return ResponseSchema.ok(message="获取系统消息成功", data=[SystemMessage.model_validate(m) for m in system_messages])
 
 @router.post("/update_system_message_status")
-async def update_system_message_status_router(message_id: int,title: str,content: str,action_type: int, db: Session = Depends(get_db)):
-    system_message = update_system_message_status(db, message_id,title,content,action_type)
+async def update_system_message_status_router(message_id: int, title: str, content: str, action_type: int, db: Session = Depends(get_db)):
+    system_message = update_system_message_status(db, message_id, title, content, action_type)
     if system_message:
         return ResponseSchema.ok(message="更新系统消息状态成功", data=SystemMessage.model_validate(system_message))
     else:
@@ -25,7 +25,7 @@ async def update_system_message_status_router(message_id: int,title: str,content
 
 @router.post("/create_system_message")
 async def create_system_message_router(system_message: SystemMessage, db: Session = Depends(get_db)):
-    system_message = create_system_message(db, system_message.title, system_message.content, system_message.user_id, action_type=0, source_id=system_message.source_id)   
-    if system_message:
-        return ResponseSchema.ok(message="创建系统消息成功", data=SystemMessage.model_validate(system_message))
+    receiver_msg, _ = create_system_message(db, system_message.title, system_message.content, system_message.user_id, action_type=0, source_id=system_message.source_id)
+    if receiver_msg:
+        return ResponseSchema.ok(message="创建系统消息成功", data=SystemMessage.model_validate(receiver_msg))
     return ResponseSchema.fail(message="创建系统消息失败", data=None)

@@ -75,19 +75,21 @@ async def chat_ws(websocket: WebSocket, user_id: int):
                     manager.disconnect(user_id)
             
             elif data.get("type", None) == "add_friend":
-                add_friend_info = data["content"]
-                add_friend_info["type"] = 'add_friend'
+                recipient_friend_info = data["recipient_data"]
+                sender_user_info = data["sender_data"]
                 with SessionLocal() as db:
-                    res = create_system_message(
+                    receiver_msg, sender_msg = create_system_message(
                         db=db,
                         title="好友请求",
-                        content=f"用户{add_friend_info['name']}请求添加您为好友",
+                        content=f"用户{sender_user_info['name']}请求添加您为好友",
                         user_id=data["to_user_id"],
                         action_type=0,
-                        source_id=user_id
+                        source_id=user_id,
+                        sender_title="好友请求已发送",
+                        sender_content=f"您已向用户{recipient_friend_info['name']}发送好友请求"
                     )
-                    if res:
-                        res_dict = SystemMessage.model_validate(res).model_dump()
+                    if receiver_msg:
+                        res_dict = SystemMessage.model_validate(receiver_msg).model_dump()
                         for key, value in res_dict.items():
                             if isinstance(value, datetime):
                                 res_dict[key] = value.isoformat()
@@ -96,12 +98,51 @@ async def chat_ws(websocket: WebSocket, user_id: int):
                             to_user_id=data["to_user_id"],
                             message=res_dict
                         )
+                    if sender_msg:
+                        sender_dict = SystemMessage.model_validate(sender_msg).model_dump()
+                        for key, value in sender_dict.items():
+                            if isinstance(value, datetime):
+                                sender_dict[key] = value.isoformat()
+                        sender_dict['type'] = 'add_friend'
+                        await manager.send_private_message(
+                            to_user_id=user_id,
+                            message=sender_dict
+                        )
 
             elif data.get("type", None) == "accept_friend_request":
                 with SessionLocal() as db:
-                    confirm_friend = confirm_friend_utils(db, data["to_user_id"],user_id)
-                    if confirm_friend:
-                        update_system_message_status(db, data["message_id"], data["title"], data["content"],data["action_type"])
+                    confirm_friend = confirm_friend_utils(db, data["to_user_id"],user_id,data["action_type"])
+                    if confirm_friend and data["action_type"] == 1:
+                        update_system_message_status(
+                            db=db, 
+                            receiver_id=data["to_user_id"], 
+                            sender_id=user_id, 
+                            sender_title="好友请求已接受", 
+                            sender_content=f"您已接受好友请求", 
+                            action_type=data["action_type"], 
+                            receiver_title="好友请求已接受", 
+                            receiver_content=f"用户已接受您的好友请求"
+                        )
+                        confirm_friend_obj = UserFriend.model_validate(confirm_friend).model_dump()
+                        for key, value in confirm_friend_obj.items():
+                                if isinstance(value, datetime):
+                                    confirm_friend_obj[key] = value.isoformat()
+                        confirm_friend_obj['type'] = 'accept_friend_request'
+                        await manager.send_private_message(
+                            to_user_id=data["to_user_id"],
+                            message=confirm_friend_obj
+                        )
+                    elif confirm_friend and data["action_type"] == 2:
+                        update_system_message_status(
+                            db, 
+                            data["to_user_id"], 
+                            user_id, 
+                            receiver_title="好友请求已拒绝", 
+                            receiver_content=f"您已拒绝好友请求", 
+                            action_type=data["action_type"], 
+                            sender_title="好友请求已拒绝", 
+                            sender_content=f"用户已拒绝您的好友请求"
+                        )
                         confirm_friend_obj = UserFriend.model_validate(confirm_friend).model_dump()
                         for key, value in confirm_friend_obj.items():
                                 if isinstance(value, datetime):

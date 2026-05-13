@@ -1,32 +1,22 @@
 import os
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
 
-client = OpenAI(
+llm = ChatOpenAI(
     api_key=os.environ.get("MIMO_API_KEY"),
-    base_url="https://api.xiaomimimo.com/v1"
+    base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+    model="mimo-v2.5-pro"
 )
-completion = client.chat.completions.create(
-    model="mimo-v2.5-pro",
-    messages=[
+completion = llm.invoke(
+    [
         {
             "role": "system",
             "content": "You are MiMo, an AI assistant developed by Xiaomi. Today is date: Tuesday, December 16, 2025. Your knowledge cutoff date is December 2024."
         },
         {
             "role": "user",
-            "content": "please introduce yourself"
+            "content": "介绍一下你自己"
         }
-    ],
-    max_completion_tokens=1024,
-    temperature=1.0,
-    top_p=0.95,
-    stream=False,
-    stop=None,
-    frequency_penalty=0,
-    presence_penalty=0,
-    extra_body={
-        "thinking": {"type": "disabled"}
-    }
+    ]
 )
 
-print(completion.model_dump_json())
+print(completion.content)

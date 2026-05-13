@@ -11,7 +11,7 @@ class ToolCall(Base):
     tool_name = Column(String(100), nullable=False, comment="工具名称")
     tool_content = Column(Text, nullable=True, comment="工具返回结果")
     tool_input = Column(Text, nullable=True, comment="工具输入参数")
-    status = Column(Integer, default=1, comment="状态: 1=成功, 0=失败")
+    status = Column(Integer, default=1, comment="状态: 1=成功, 0=失败 , 2=进行中")
     created_at = Column(DateTime, server_default=func.now())
 
     # 关系映射

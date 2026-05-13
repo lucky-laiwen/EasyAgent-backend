@@ -11,29 +11,63 @@ def create_system_message(
     content: str,
     user_id: int,
     action_type: int = 0,
-    source_id: int | None = None
-) -> SystemMessage:
-    system_message = SystemMessage(
+    source_id: int | None = None,
+    sender_title: str | None = None,
+    sender_content: str | None = None,
+) -> tuple[SystemMessage, SystemMessage | None]:
+    # 接收人的记录
+    receiver_msg = SystemMessage(
         title=title,
         content=content,
         user_id=user_id,
-        action_type=action_type,
-        source_id=source_id
+        source_id=source_id,
+        action_type=action_type
     )
-    db.add(system_message)
+    db.add(receiver_msg)
+
+    # 发起人的记录
+    sender_msg = None
+    if sender_title or sender_content:
+        sender_msg = SystemMessage(
+            title=sender_title,
+            content=sender_content,
+            user_id=source_id,
+            source_id=user_id,
+            action_type=2
+        )
+        db.add(sender_msg)
+
     db.commit()
-    db.refresh(system_message)
-    return system_message
+    db.refresh(receiver_msg)
+    if sender_msg:
+        db.refresh(sender_msg)
+    return receiver_msg, sender_msg
 
 
-def update_system_message_status(db: Session, message_id: int,title: str,content: str,action_type: int):
-    system_message = db.query(SystemMessage).filter(SystemMessage.id == message_id).first()
-    if system_message:
-        system_message.is_read = 1
-        system_message.title = title
-        system_message.content = content
-        system_message.action_type = action_type
+def update_system_message_status(
+    db: Session,
+    receiver_id: int,
+    sender_id: int,
+    action_type: int = 0,
+    receiver_title: str | None = None, 
+    receiver_content: str | None = None, 
+    sender_title: str | None = None, 
+    sender_content: str | None = None, 
+):
+    receiver_msg = db.query(SystemMessage).filter(SystemMessage.user_id == receiver_id, SystemMessage.source_id == sender_id).first()
+    sender_msg = db.query(SystemMessage).filter(SystemMessage.user_id == sender_id, SystemMessage.source_id == receiver_id).first()
+    if receiver_msg:
+        receiver_msg.is_read = 1
+        receiver_msg.title = receiver_title
+        receiver_msg.content = receiver_content
+        receiver_msg.action_type = action_type
         db.commit()
-        db.refresh(system_message)
-        return system_message
-    return None
+        db.refresh(receiver_msg)
+    if sender_msg:
+        sender_msg.is_read = 1
+        sender_msg.title = sender_title
+        sender_msg.content = sender_content
+        sender_msg.action_type = action_type
+        db.commit()
+        db.refresh(sender_msg)
+    return receiver_msg, sender_msg

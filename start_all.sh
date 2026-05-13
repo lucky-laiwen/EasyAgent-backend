@@ -3,7 +3,7 @@
 echo "🚀 启动所有服务..."
 
 # uvicorn
-uvicorn main:app --reload &
+uv run uvicorn main:app --reload &
 
 # utils 服务
 cd utils

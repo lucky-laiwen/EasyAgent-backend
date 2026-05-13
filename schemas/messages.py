@@ -4,7 +4,7 @@ from typing import Optional, List
 
 
 # 工具调用响应
-class ToolCallResponse(BaseModel):
+class ToolCall(BaseModel):
     id: int = Field(..., description="工具调用ID")
     tool_name: str = Field(..., description="工具名称")
     tool_content: Optional[str] = Field(None, description="工具返回结果")
@@ -33,7 +33,7 @@ class Message(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     chat_id: int = Field(..., description="聊天id")
     think_content: Optional[str] = Field(None, description="思考内容")
-    tool_calls: List[ToolCallResponse] = Field(default_factory=list, description="工具调用列表")
+    tool_calls: List[ToolCall] = Field(default_factory=list, description="工具调用列表")
 
     class Config:
         from_attributes = True

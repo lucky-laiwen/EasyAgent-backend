@@ -45,7 +45,7 @@ def get_pending_friend_requests(db: Session, user_id: int, friend_id: int):
 
 def create_user_friend(db: Session, user_id: int, friend_id: int):
     db_user_friend = UserFriend(user_id=user_id, friend_id=friend_id,status=0)
-    friend_info = db.query(User).filter(User.id == user_id).first()    
+    friend_info = db.query(User).filter(User.id == friend_id).first()    
     db.add(db_user_friend)
     db.commit()
     db.refresh(db_user_friend)
@@ -93,7 +93,7 @@ def search_and_classify_friends(db: Session, current_user_id: int, name_or_email
     }
 
 # 确认好友
-def confirm_friend_utils(db: Session, user_id: int, friend_id: int):
+def confirm_friend_utils(db: Session, user_id: int, friend_id: int , action_type: int):
     friend = db.query(UserFriend).filter(
         and_(
             UserFriend.user_id == user_id,
@@ -103,7 +103,7 @@ def confirm_friend_utils(db: Session, user_id: int, friend_id: int):
     ).first()
 
     if friend:
-        friend.status = 1
+        friend.status = action_type
         db.commit()
         db.refresh(friend)
         return friend

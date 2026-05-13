@@ -35,7 +35,8 @@ def add_tool_call(db: Session, message_id: int, tool_name: str, tool_content: st
         message_id=message_id,
         tool_name=tool_name,
         tool_content=tool_content,
-        tool_input=tool_input
+        tool_input=tool_input,
+        status=2
     )
     db.add(tool_call)
     db.commit()
@@ -49,9 +50,23 @@ def update_tool_message(db: Session, tool_call_id: int, tool_content: str) -> Op
     if not tool_call:
         return None
     tool_call.tool_content = tool_content
+    tool_call.status = 1
     db.commit()
     db.refresh(tool_call)
     return tool_call
+
+
+# 更新消息内容
+def update_message_content(db: Session, message_id: int, content: str, think_content: str = None) -> Optional[Message]:
+    message = db.query(Message).filter(Message.id == message_id).first()
+    if not message:
+        return None
+    message.content = content
+    if think_content is not None:
+        message.think_content = think_content
+    db.commit()
+    db.refresh(message)
+    return message
 
 
 # 查询单个工具调用
