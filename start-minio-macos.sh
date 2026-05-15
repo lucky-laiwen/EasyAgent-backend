@@ -1,11 +1,25 @@
 #!/bin/bash
 
-# 进入 minio 可执行文件目录（如果你是全局安装可以不写）
-# cd /usr/local/bin
+# MinIO 启动脚本
+MINIO_ROOT_USER="minioadmin"
+MINIO_ROOT_PASSWORD="minioadmin"
+MINIO_DATA_DIR="$HOME/minio/data"
+MINIO_ADDRESS=":9000"
+MINIO_CONSOLE_ADDRESS=":9001"
 
-# 设置账号密码（强烈建议）
-export MINIO_ROOT_USER=admin
-export MINIO_ROOT_PASSWORD=12345678
+# 创建数据目录
+mkdir -p "$MINIO_DATA_DIR"
+
+echo "🚀 启动 MinIO 服务..."
+echo "   数据目录: $MINIO_DATA_DIR"
+echo "   API 地址: http://localhost:9000"
+echo "   控制台: http://localhost:9001"
+echo "   用户名: $MINIO_ROOT_USER"
+echo "   密码: $MINIO_ROOT_PASSWORD"
 
 # 启动 MinIO
-minio server --console-address :9001 ~/data
+MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+minio server "$MINIO_DATA_DIR" \
+    --address "$MINIO_ADDRESS" \
+    --console-address "$MINIO_CONSOLE_ADDRESS"

@@ -10,7 +10,7 @@ from schemas.response import ResponseSchema
 from database import get_db
 from sqlalchemy.orm import Session
 import json
-from utils.langchain_client import chat_stream, generate_chat_title
+from utils.openai_client import chat_stream, generate_chat_title
 router = APIRouter(
     prefix="/chat",
     tags=["chat"]
@@ -39,7 +39,7 @@ async def create_chat_router(
     message_obj = get_chat_messages(db, chatData.get("id"))
     message_out = [Message.model_validate(m) for m in message_obj]
     messages_for_llm = [
-        {"role": "user" if msg.sender == 0 else "assistant", "content": msg.content}
+        {"role": "user" if msg.sender == 0 else "assistant", "content": msg.content }
         for msg in message_out
     ]
     # 预创建 AI 消息占位，tool_call 将关联到此消息
@@ -59,27 +59,25 @@ async def create_chat_router(
                 if not chunk:
                     continue
 
-                thinking = chunk.get("thinking")
+                chunk_type = chunk.get("type")
                 content = chunk.get("content")
 
-                if chunk.get("type") == "tool_start":
+                if chunk_type == "tool_start":
                     tool_name = chunk['tool']
                     tool_run_id = chunk.get("tool_run_id", tool_name)
-                    # 新的工具调用开始，按 run_id 存入 map
                     tool_obj = add_tool_call(db=db, message_id=ai_msg_out.id, tool_name=tool_name, tool_input=chunk['args'])
                     tool_obj_out = ToolCall.model_validate(tool_obj)
                     tool_calls_data.append(tool_obj_out)
                     tool_call_map[tool_run_id] = tool_obj_out
                     yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': tool_obj_out.model_dump(mode='json')}, ensure_ascii=False)}\n\n"
 
-                if chunk.get("type") == "tool_mid":
+                elif chunk_type == "tool_mid":
                     tool_run_id = chunk.get("tool_run_id", chunk.get("tool"))
                     tool_content_str = chunk.get("tool_content")
                     try:
                         current_tool_content = json.dumps(tool_content_str, ensure_ascii=False)
                     except (TypeError, json.JSONDecodeError):
                         current_tool_content = str(tool_content_str)
-                    # 按 run_id 找到对应的 tool call 对象
                     matching_tool = tool_call_map.get(tool_run_id)
                     if not matching_tool:
                         continue
@@ -88,10 +86,11 @@ async def create_chat_router(
                     res_obj_out["message_id"] = chatData.get("id")
                     yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': res_obj_out}, ensure_ascii=False)}\n\n"
 
-                if thinking:
-                    think_content += thinking
-                    yield f"data: {json.dumps({'content': thinking, 'type': 'think'}, ensure_ascii=False)}\n\n"
-                elif content is not None:
+                elif chunk_type == "think":
+                    think_content += content
+                    yield f"data: {json.dumps({'content': content, 'type': 'think'}, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "text" and content is not None:
                     formal_content += content
                     yield f"data: {json.dumps({'content': content, 'type': 'text'}, ensure_ascii=False)}\n\n"
         except Exception as e:

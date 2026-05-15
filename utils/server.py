@@ -1,8 +1,7 @@
 import asyncio
 import aiohttp
 from fastmcp import FastMCP
-from ddgs import DDGS
-from datetime import datetime
+from duckduckgo_search import DDGS
 import json
 mcp = FastMCP("Web Search & Weather MCP")
 
@@ -82,9 +81,9 @@ async def web_search(query: str):
         # 在子线程中调用同步搜索
         def search():
             with DDGS() as ddgs:
-                text = list(ddgs.text(query, region="cn-zh", max_results=50))
-                imgs = list(ddgs.images(query, region="cn-zh", max_results=50))
-                news = list(ddgs.news(query, region="cn-zh", max_results=50))
+                text = list(ddgs.text(query, max_results=50))
+                imgs = list(ddgs.images(query, max_results=50))
+                news = list(ddgs.news(query, max_results=50))
                 return {
                     "text": text,
                     "imgs": imgs,
