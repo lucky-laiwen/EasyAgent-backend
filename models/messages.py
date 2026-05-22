@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, Integer, Text, ForeignKey, DateTime, func, SmallInteger
+from sqlalchemy import Column, BigInteger, Integer, Text, ForeignKey, DateTime, func, SmallInteger, String, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -12,7 +12,10 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     think_content = Column(Text)
+    message_type = Column(String(10), nullable=True, default=None, comment="text/ppt, NULL=text")
+    rag_references = Column(JSON, nullable=True, comment="RAG引用的文档信息")
 
     # 关系映射
     chat = relationship("Chat", back_populates="messages")
     tool_calls = relationship("ToolCall", back_populates="message", cascade="all, delete-orphan")
+    attachments = relationship("ChatAttachment", back_populates="message")

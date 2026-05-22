@@ -10,7 +10,7 @@ CREATE TABLE user (
     email VARCHAR(255) NOT NULL,
     password VARCHAR(255) NOT NULL,
     is_active INT DEFAULT 0,
-    avatar VARCHAR(500) DEFAULT 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80',
+    avatar TEXT DEFAULT 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_user_id (id)
 );
@@ -34,10 +34,22 @@ CREATE TABLE messages (
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     think_content TEXT,
-    tool_content TEXT,
-    tool_name CHAR(50),
+    message_type VARCHAR(10) DEFAULT NULL COMMENT 'text/ppt, NULL=text',
     INDEX idx_messages_id (id),
     FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE
+);
+
+-- 3.1 tool_calls 表（依赖 messages）
+CREATE TABLE tool_calls (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    tool_name VARCHAR(100) NOT NULL COMMENT '工具名称',
+    tool_content MEDIUMTEXT COMMENT '工具返回结果',
+    tool_input TEXT COMMENT '工具输入参数',
+    status INT DEFAULT 1 COMMENT '状态: 1=成功, 0=失败, 2=进行中',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_tool_calls_id (id),
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 
 -- 4. chat_message 表（依赖 user）

@@ -6,3 +6,4 @@ from .chat_share import ChatShare
 from .user_friend import UserFriend
 from .messages import Message
 from .tool_call import ToolCall
+from .chat_attachment import ChatAttachment

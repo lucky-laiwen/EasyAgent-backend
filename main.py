@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
-from router import user, chat, user_chat, user_friend , system_message
+from router import user, chat, user_chat, user_friend, system_message, knowledge
 from utils.i18n import i18n_middleware
 from database import init_db
 
@@ -33,9 +35,22 @@ app.add_middleware(
 # 注册 i18n 中间件
 app.middleware("http")(i18n_middleware)
 
+
+# 静态资源缓存中间件（1年有效期）
+@app.middleware("http")
+async def cache_static_files(request: Request, call_next):
+    response: Response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
 # 注册路由
 app.include_router(user.router)
 app.include_router(chat.router)
 app.include_router(user_chat.router)
 app.include_router(user_friend.router)
 app.include_router(system_message.router)
+app.include_router(knowledge.router)
+
+# 静态资源（CDN 本地缓存，浏览器长期缓存）
+app.mount("/static", StaticFiles(directory="static"), name="static")
