@@ -94,4 +94,12 @@ def get_chat_messages(db: Session, chat_id: int) -> List[Message]:
     chat = db.query(Chat).filter(Chat.id == chat_id).first()
     if not chat:
         return []
-    return list(chat.messages)   
+    return list(chat.messages)
+
+
+# 按 message_id 和 tool_name 查询工具调用记录
+def get_tool_call_by_message_and_name(db: Session, message_id: int, tool_name: str) -> Optional[ToolCall]:
+    return db.query(ToolCall).filter(
+        ToolCall.message_id == message_id,
+        ToolCall.tool_name == tool_name
+    ).first()   
