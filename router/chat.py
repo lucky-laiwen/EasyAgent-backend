@@ -304,6 +304,158 @@ async def update_outline_endpoint(
     return ResponseSchema.ok(message="大纲更新成功")
 
 
+# PPT 生成（SSE 流）— 从已确认的大纲生成幻灯片
+@router.post("/ppt_generate")
+async def ppt_generate_endpoint(
+    chatData: dict,
+    db: Session = Depends(get_db),
+    user: str = Depends(get_current_user)
+):
+    from utils.openai_client import ppt_slide_stream
+    from crud.messages import get_tool_call_by_message_and_name
+
+    message_id = chatData.get("message_id")
+    if not message_id:
+        return ResponseSchema.fail(message="缺少 message_id 参数")
+
+    # 查找大纲记录
+    outline_tool = get_tool_call_by_message_and_name(db, message_id, "ppt_outline")
+    if not outline_tool:
+        return ResponseSchema.fail(message="大纲记录不存在")
+    if outline_tool.status != 2:
+        return ResponseSchema.fail(message="大纲已确认或已取消")
+
+    # 解析大纲
+    try:
+        outline_data = json.loads(outline_tool.tool_content)
+        slides = outline_data.get("slides", [])
+        style = outline_data.get("style", {})
+    except (json.JSONDecodeError, AttributeError):
+        return ResponseSchema.fail(message="大纲数据格式错误")
+
+    if not slides:
+        return ResponseSchema.fail(message="大纲为空，无法生成 PPT")
+
+    # 标记大纲为已确认
+    outline_tool.status = 1
+    db.commit()
+
+    # 获取用户原始消息
+    user_msg = outline_tool.tool_input or ""
+
+    # 创建 PPT 工具调用记录
+    ai_msg = create_message(db, chatData.get("id"), "", 1, None, message_type="ppt")
+    if not ai_msg:
+        return ResponseSchema.fail(message="创建AI消息失败", data=None)
+    ai_msg_out = Message.model_validate(ai_msg)
+
+    slides_html = {}
+    text_parts = []
+    think_parts = []
+    ppt_tool_call_id = None
+
+    def save_ppt_incremental():
+        nonlocal ppt_tool_call_id
+        if not slides_html:
+            return
+        ppt_data = {
+            "slides": [
+                {"index": i, "html": slides_html.get(i, "")}
+                for i in sorted(slides_html.keys())
+            ]
+        }
+        ppt_content = json.dumps(ppt_data, ensure_ascii=False)
+        if ppt_tool_call_id is None:
+            tool_obj = add_tool_call(
+                db=db, message_id=ai_msg_out.id,
+                tool_name="ppt", tool_content=ppt_content,
+                tool_input=user_msg,
+            )
+            ppt_tool_call_id = tool_obj.id
+        else:
+            update_tool_content(db=db, tool_call_id=ppt_tool_call_id, tool_content=ppt_content)
+
+    cancel_event = asyncio.Event()
+
+    async def ppt_event_generator():
+        nonlocal slides_html, text_parts, think_parts, ppt_tool_call_id
+        try:
+            async for chunk in ppt_slide_stream(slides, style, user_msg, cancel_event=cancel_event):
+                if not chunk:
+                    continue
+                chunk_type = chunk.get("type")
+
+                if chunk_type == "think":
+                    think_parts.append(chunk["content"])
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "text":
+                    text_parts.append(chunk["content"])
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "slide_start":
+                    slides_html[chunk["index"]] = ""
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "slide_chunk":
+                    idx = chunk["index"]
+                    slides_html[idx] += chunk["content"]
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "slide_end":
+                    save_ppt_incremental()
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "error":
+                    text_content = "\n".join(text_parts) if text_parts else ""
+                    think_content = "\n".join(think_parts) if think_parts else None
+                    update_message_content(db, ai_msg.id, text_content, think_content)
+                    save_ppt_incremental()
+                    yield f"event: error\ndata: {json.dumps({'error': chunk['content']}, ensure_ascii=False)}\n\n"
+                    return
+
+                elif chunk_type == "done":
+                    text_content = "\n".join(text_parts) if text_parts else ""
+                    think_content = "\n".join(think_parts) if think_parts else None
+                    update_message_content(db, ai_msg.id, text_content, think_content)
+
+                    ppt_data = {
+                        "slides": [
+                            {"index": i, "html": slides_html.get(i, "")}
+                            for i in sorted(slides_html.keys())
+                        ]
+                    }
+                    if ppt_tool_call_id is None:
+                        add_tool_call(
+                            db=db, message_id=ai_msg_out.id,
+                            tool_name="ppt",
+                            tool_content=json.dumps(ppt_data, ensure_ascii=False),
+                            tool_input=user_msg,
+                        )
+                    else:
+                        update_tool_message(
+                            db=db, tool_call_id=ppt_tool_call_id,
+                            tool_content=json.dumps(ppt_data, ensure_ascii=False),
+                        )
+
+                    yield f"event: done\ndata: {json.dumps({'done': True})}\n\n"
+
+        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+            cancel_event.set()
+            text_content = "\n".join(text_parts) if text_parts else ""
+            think_content = "\n".join(think_parts) if think_parts else None
+            update_message_content(db, ai_msg.id, text_content, think_content)
+            save_ppt_incremental()
+        except Exception as e:
+            text_content = "\n".join(text_parts) if text_parts else ""
+            think_content = "\n".join(think_parts) if think_parts else None
+            update_message_content(db, ai_msg.id, text_content, think_content)
+            save_ppt_incremental()
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(ppt_event_generator(), media_type="text/event-stream")
+
+
 # 创建新聊天
 @router.post('/create_chat', response_model=ResponseSchema)
 async def create_chat_router(chatData: CreateChat, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
