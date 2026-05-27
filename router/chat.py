@@ -16,7 +16,7 @@ import time
 import uuid
 import io
 import asyncio
-from utils.openai_client import chat_stream, generate_chat_title, ppt_stream
+from utils.openai_client import chat_stream, generate_chat_title, ppt_stream, ppt_outline_stream
 from utils.rag_service import get_rag_service
 from utils.document_parser import validate_file, parse_document, is_text_file, is_image_file, image_to_base64
 from minio import Minio
@@ -104,6 +104,168 @@ async def upload_chat_file(
         )
     except Exception as e:
         return ResponseSchema.fail(message=f"上传失败: {str(e)}")
+
+
+# PPT 大纲生成（SSE 流）
+@router.post("/ppt_outline")
+async def ppt_outline_endpoint(
+    chatData: dict,
+    db: Session = Depends(get_db),
+    user: str = Depends(get_current_user)
+):
+    doc_ids = chatData.get("doc_ids")
+    file_ids = chatData.get("file_ids")
+
+    # 处理附件（复用 /stream 的逻辑）
+    file_attachments = []
+    if file_ids:
+        attachments = get_attachments_by_ids(db, file_ids)
+        for att in attachments:
+            if is_image_file(att.filename):
+                try:
+                    response = minio_client.get_object(minio_bucket, att.minio_key)
+                    file_bytes = response.read()
+                    response.close()
+                    response.release_conn()
+                    b64_url = image_to_base64(att.filename, file_bytes)
+                    file_attachments.append({"filename": att.filename, "text_content": None, "image_base64": b64_url})
+                except Exception:
+                    file_attachments.append({"filename": att.filename, "text_content": "(图片读取失败)", "image_base64": None})
+            else:
+                file_attachments.append({"filename": att.filename, "text_content": att.text_content or "(无内容)", "image_base64": None})
+
+    # RAG 引用
+    user_rag_refs = None
+    if doc_ids:
+        from models.knowledge import KnowledgeDocument
+        docs = db.query(KnowledgeDocument).filter(KnowledgeDocument.id.in_(doc_ids)).all()
+        user_rag_refs = [{"doc_id": d.id, "filename": d.filename, "file_type": d.file_type} for d in docs]
+
+    # 创建用户消息
+    user_message = create_message(db, chatData.get("id"), chatData.get("message"), 0, None, message_type="text", rag_references=user_rag_refs)
+
+    if doc_ids and user_message:
+        from crud.knowledge import bind_docs_to_message
+        bind_docs_to_message(db, doc_ids, chatData.get("id"), user_message.id)
+
+    if file_ids and user_message:
+        bind_attachments_to_message(db, file_ids, chatData.get("id"), user_message.id)
+
+    # 构建 LLM 消息
+    message_obj = get_chat_messages(db, chatData.get("id"))
+    message_out = [Message.model_validate(m) for m in message_obj]
+    messages_for_llm = [
+        {"role": "user" if msg.sender == 0 else "assistant", "content": msg.content}
+        for msg in message_out
+    ]
+
+    # 拼入附件内容
+    if file_attachments and messages_for_llm:
+        has_images = any(f.get("image_base64") for f in file_attachments)
+        text_parts = []
+        for f in file_attachments:
+            if f.get("text_content"):
+                text_parts.append(f"[附件: {f['filename']}]\n{f['text_content']}")
+
+        if has_images:
+            content_array = []
+            original_text = messages_for_llm[-1]["content"] or ""
+            if text_parts:
+                original_text += "\n\n---\n" + "\n\n".join(text_parts)
+            content_array.append({"type": "text", "text": original_text})
+            for f in file_attachments:
+                if f.get("image_base64"):
+                    content_array.append({"type": "image_url", "image_url": {"url": f["image_base64"]}})
+            messages_for_llm[-1]["content"] = content_array
+        elif text_parts:
+            original_text = messages_for_llm[-1]["content"] or ""
+            messages_for_llm[-1]["content"] = original_text + "\n\n---\n" + "\n\n".join(text_parts)
+
+    # 创建 AI 消息占位
+    ai_msg = create_message(db, chatData.get("id"), "", 1, None, message_type="ppt")
+    if not ai_msg:
+        return ResponseSchema.fail(message="创建AI消息失败", data=None)
+    ai_msg_out = Message.model_validate(ai_msg)
+
+    # 大纲数据收集
+    outline_slides = []
+    outline_style = {}
+    think_parts = []
+    tool_calls_data = []
+    tool_call_map = {}
+    outline_tool_call_id = None
+
+    cancel_event = asyncio.Event()
+
+    async def outline_event_generator():
+        nonlocal outline_slides, outline_style, think_parts, tool_calls_data, tool_call_map, outline_tool_call_id
+        try:
+            async for chunk in ppt_outline_stream(messages_for_llm, cancel_event=cancel_event):
+                if not chunk:
+                    continue
+                chunk_type = chunk.get("type")
+
+                if chunk_type == "think":
+                    think_parts.append(chunk["content"])
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "tool_start":
+                    tool_name = chunk['tool']
+                    tool_run_id = chunk.get("tool_run_id", tool_name)
+                    tool_obj = add_tool_call(db=db, message_id=ai_msg_out.id, tool_name=tool_name, tool_input=chunk['args'])
+                    tool_obj_out = ToolCall.model_validate(tool_obj)
+                    tool_calls_data.append(tool_obj_out)
+                    tool_call_map[tool_run_id] = tool_obj_out
+                    yield f"data: {json.dumps({'type': 'tool_name', 'tool_name': tool_obj_out.model_dump(mode='json')}, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "tool_mid":
+                    tool_run_id = chunk.get("tool_run_id", chunk.get("tool"))
+                    tool_content_str = chunk.get("tool_content")
+                    try:
+                        current_tool_content = json.dumps(tool_content_str, ensure_ascii=False)
+                    except (TypeError, json.JSONDecodeError):
+                        current_tool_content = str(tool_content_str)
+                    matching_tool = tool_call_map.get(tool_run_id)
+                    if not matching_tool:
+                        continue
+                    res_obj = update_tool_message(db=db, tool_call_id=matching_tool.id, tool_content=current_tool_content)
+                    res_obj_out = ToolCall.model_validate(res_obj).model_dump(mode="json")
+                    res_obj_out["message_id"] = chatData.get("id")
+                    yield f"data: {json.dumps({'type': 'tool_content', 'tool_content': res_obj_out}, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "outline":
+                    outline_slides = chunk.get("slides", [])
+                    outline_style = chunk.get("style", {})
+                    # 存入 DB
+                    outline_data = json.dumps({"slides": outline_slides, "style": outline_style}, ensure_ascii=False)
+                    tool_obj = add_tool_call(
+                        db=db, message_id=ai_msg_out.id,
+                        tool_name="ppt_outline", tool_content=outline_data,
+                        tool_input=chatData.get("message"),
+                    )
+                    outline_tool_call_id = tool_obj.id
+                    # 更新消息内容
+                    update_message_content(db, ai_msg.id, f"已生成 {len(outline_slides)} 页大纲", "\n".join(think_parts) if think_parts else None)
+                    # 返回大纲 + message_id
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif chunk_type == "error":
+                    update_message_content(db, ai_msg.id, "", "\n".join(think_parts) if think_parts else None)
+                    yield f"event: error\ndata: {json.dumps({'error': chunk['content']}, ensure_ascii=False)}\n\n"
+                    return
+
+            # 流结束，返回 message_id
+            if not cancel_event.is_set():
+                yield f"event: done\ndata: {json.dumps({'done': True, 'message_id': ai_msg_out.id})}\n\n"
+
+        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+            cancel_event.set()
+            update_message_content(db, ai_msg.id, "", "\n".join(think_parts) if think_parts else None)
+        except Exception as e:
+            update_message_content(db, ai_msg.id, "", "\n".join(think_parts) if think_parts else None)
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(outline_event_generator(), media_type="text/event-stream")
 
 
 # 创建新聊天
