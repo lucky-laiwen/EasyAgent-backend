@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import json
 import asyncio
+from datetime import datetime
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from typing import List
@@ -47,15 +48,16 @@ client = AsyncOpenAI(
     base_url="https://token-plan-sgp.xiaomimimo.com/v1",
 )
 
-with open("utils/optimizer_system_prompt.md", "r", encoding="utf-8") as f:
-    system_prompt = f.read()
+def _load_prompt(path: str) -> str:
+    """读取提示词文件并注入当前时间"""
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    current_time = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+    return f"{content}\n\n# 当前时间\n{current_time}"
 
-with open("utils/ppt_outline_prompt.md", "r", encoding="utf-8") as f:
-    ppt_outline_prompt = f.read()
-
-with open("utils/ppt_slide_prompt.md", "r", encoding="utf-8") as f:
-    ppt_slide_prompt = f.read()
-
+system_prompt = _load_prompt("utils/optimizer_system_prompt.md")
+ppt_outline_prompt = _load_prompt("utils/ppt_outline_prompt.md")
+ppt_slide_prompt = _load_prompt("utils/ppt_slide_prompt.md")
 
 async def chat_stream(messages, context=None, cancel_event: asyncio.Event = None):
     """
@@ -200,45 +202,14 @@ async def chat_stream(messages, context=None, cancel_event: asyncio.Event = None
                 {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
             )
 
-
-import re
-
-
 def repair_html(html: str) -> str:
-    """修复 LLM 生成的 HTML 中的常见问题。"""
-    # 1. 修复截断的 CSS 属性值（如 "backdrop-filter);" → 删除该不完整声明）
-    #    匹配：CSS 属性名后紧跟 )，中间没有值
-    html = re.sub(r'[a-z-]+\s*:\s*\)', ')', html)
-    #    匹配：CSS 属性名后只有截断的值（如 "border: 1px solid rgba(107, 114, 128, 0.5" 未闭合括号）
-    #    检测不匹配的括号并删除该声明
-    def fix_unclosed_parens(m):
-        decl = m.group(0)
-        open_count = decl.count('(')
-        close_count = decl.count(')')
-        if open_count > close_count:
-            return ''  # 括号不匹配，删除整个声明
-        return decl
-    html = re.sub(r'[a-z-]+\s*:\s*[^;{}\n"]+?;', fix_unclosed_parens, html)
-
-    # 2. 修复未闭合的标签：确保 body、html 正确闭合
+    """仅做最基本的结构兜底，确保 HTML 文档闭合。"""
     lower = html.lower()
     if '</body>' not in lower:
-        if '</script>' in lower:
-            html = html.rstrip()
-            html += '\n</body>'
-        else:
-            html = html.rstrip() + '\n</body>\n</html>'
-    if '</html>' not in lower:
+        html = html.rstrip() + '\n</body>\n</html>'
+    elif '</html>' not in lower:
         html = html.rstrip() + '\n</html>'
-
-    # 3. 修复常见的截断字符串（中文字符被截断为乱码的单个字节）
-    html = html.replace('�', '')
-
-    # 4. 删除不完整的 CSS 属性行（属性名后直接换行，没有值）
-    html = re.sub(r'(?m)^\s*[a-z-]+\s*:\s*$', '', html)
-
     return html
-
 
 # CDN URL → 本地路径映射（后处理兜底，防止 LLM 仍输出旧 URL）
 CDN_REPLACEMENTS = [
@@ -306,6 +277,170 @@ def extract_style_summary(html: str) -> str:
         parts.append(f"【主容器布局】{main_div.group(1)[:120]}")
 
     return '\n'.join(parts) if parts else "（无关键样式信息）"
+
+
+async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
+    """
+    PPT 大纲生成流式函数：工具调用 ReAct 循环 + Structured Output 生成大纲。
+
+    仅执行阶段1（大纲生成），不进入阶段2（HTML 生成）。
+    yield 事件类型: think, tool_start, tool_mid, outline, error
+
+    Args:
+        messages: 对话消息列表
+        cancel_event: 客户端断开时设置此事件，用于提前终止 LLM 推理
+    """
+    # 最后一条用户消息作为主题，之前的对话历史作为上下文
+    user_msg = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_msg = msg.get("content", "")
+
+    # 对话历史（不含最后一条用户消息）作为上下文，取最近 6 条，每条截断 500 字
+    history = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+
+    # === 生成大纲（支持工具调用）===
+    outline_messages = [{"role": "system", "content": ppt_outline_prompt}]
+    if history:
+        recent = history[-6:]
+        history_text = "\n".join(
+            f"{'用户' if m.get('role') == 'user' else '助手'}：{m.get('content', '')[:500]}"
+            for m in recent
+        )
+        outline_messages.append({
+            "role": "system",
+            "content": f"以下是之前的对话历史，用户可能引用其中的内容作为 PPT 主题，请结合上下文理解用户意图：\n\n{history_text}"
+        })
+    outline_messages.append({"role": "user", "content": user_msg})
+
+    # ReAct 循环：LLM 可调用工具查询资料后再生成大纲
+    while True:
+        collected_content = ""
+        collected_reasoning = ""
+        tool_calls_map = {}
+
+        stream = await client.chat.completions.create(
+            model="mimo-v2.5-pro",
+            messages=outline_messages,
+            tools=TOOLS,
+            stream=True,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+
+        async for chunk in stream:
+            # 检测客户端是否断开
+            if cancel_event and cancel_event.is_set():
+                await stream.close()
+                return
+
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
+
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                collected_reasoning += reasoning
+                yield {"content": reasoning, "type": "think"}
+
+            if delta.content is not None:
+                collected_content += delta.content
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": tc.id or "",
+                            "name": tc.function.name or "",
+                            "arguments": tc.function.arguments or "",
+                        }
+                    else:
+                        if tc.id:
+                            tool_calls_map[idx]["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            tool_calls_map[idx]["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tool_calls_map[idx]["arguments"] += tc.function.arguments
+
+        # 检测客户端断开或没有工具调用，结束 ReAct 循环
+        if (cancel_event and cancel_event.is_set()) or not tool_calls_map:
+            break
+
+        # 有工具调用：执行工具并追加结果
+        assistant_msg = {"role": "assistant", "content": collected_content or None}
+        if collected_reasoning:
+            assistant_msg["reasoning_content"] = collected_reasoning
+        assistant_msg["tool_calls"] = [
+            {
+                "id": tc["id"],
+                "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+            }
+            for tc in tool_calls_map.values()
+        ]
+        outline_messages.append(assistant_msg)
+
+        for tc in tool_calls_map.values():
+            tool_name = tc["name"]
+            tool_args = json.loads(tc["arguments"])
+
+            args = tool_args.get("city") or tool_args.get("query")
+            yield {"type": "tool_start", "tool": tool_name, "tool_run_id": tc["id"], "args": args}
+
+            tool_func = TOOL_MAP.get(tool_name)
+            if tool_func:
+                tool_result = await tool_func(**tool_args)
+            else:
+                tool_result = f"未知工具: {tool_name}"
+
+            tool_content = tool_result
+            if isinstance(tool_result, str):
+                try:
+                    parsed = json.loads(tool_result)
+                    if tool_name == "weather_query":
+                        tool_content = parsed.get("full_data", parsed)
+                    else:
+                        tool_content = parsed
+                except json.JSONDecodeError:
+                    pass
+
+            yield {"type": "tool_mid", "tool": tool_name, "tool_run_id": tc["id"], "tool_content": tool_content}
+
+            outline_messages.append(
+                {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
+            )
+
+    # === 用 Structured Output 生成大纲 JSON ===
+    outline_messages.append({
+        "role": "user",
+        "content": "请根据以上信息，严格按照 JSON Schema 输出大纲。",
+    })
+
+    resp = await client.chat.completions.create(
+        model="mimo-v2.5-pro",
+        messages=outline_messages,
+        response_format={"type": "json_object"},
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+
+    raw = resp.choices[0].message.content or ""
+
+    # Pydantic 校验
+    try:
+        outline = SlideOutline.model_validate_json(raw)
+    except Exception as e:
+        yield {"type": "error", "content": f"大纲结构校验失败: {str(e)}"}
+        return
+
+    if not outline.slides:
+        yield {"type": "error", "content": "大纲为空，请重试"}
+        return
+
+    slides = [s.model_dump() for s in outline.slides]
+    style = outline.style.model_dump()
+
+    # 返回大纲给前端（包含样式信息）
+    yield {"type": "outline", "slides": slides, "style": style}
 
 
 async def ppt_stream(messages, cancel_event: asyncio.Event = None):
@@ -623,14 +758,43 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
 
         yield {"type": "slide_end", "index": index}
 
-    # 全部完成，输出结束语
+    # 全部完成，生成总结内容
     ending = trailing_text.strip().rstrip("`").strip()
-    if not ending:
+    if ending:
+        yield {"type": "text", "content": ending}
+    else:
+        # 构建幻灯片摘要用于生成总结
+        slide_titles = [s.get("title", "") for s in slides]
+        total = len(slides)
+        generated = total - len(failed_slides)
+
+        summary_prompt = (
+            f"你刚刚为用户生成了一份关于「{user_msg}」的 PPT，共 {total} 页。\n"
+            f"各页标题：{'、'.join(slide_titles)}\n"
+        )
         if failed_slides:
-            ending = f"\n⚠️ 已生成 {len(slides) - len(failed_slides)}/{len(slides)} 页演示文稿（第 {', '.join(map(str, failed_slides))} 页生成失败）"
-        else:
-            ending = f"\n✅ 已成功生成 {len(slides)} 页演示文稿"
-    yield {"type": "text", "content": ending}
+            summary_prompt += f"其中第 {', '.join(map(str, failed_slides))} 页生成失败。\n"
+        summary_prompt += (
+            "\n请用 2-3 句话总结这份 PPT 的内容结构和亮点，语气自然友好，"
+            "并简要提示用户可以如何使用或修改这份演示文稿。不要重复列出每页标题。"
+        )
+
+        summary_messages = [
+            {"role": "system", "content": "你是一个 PPT 助手，擅长用简洁友好的语言总结演示文稿。"},
+            {"role": "user", "content": summary_prompt},
+        ]
+
+        stream = await client.chat.completions.create(
+            model="mimo-v2.5-pro",
+            messages=summary_messages,
+            stream=True,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                yield {"type": "text", "content": delta.content}
+
     yield {"type": "done", "content": True}
 
 
