@@ -268,6 +268,42 @@ async def ppt_outline_endpoint(
     return StreamingResponse(outline_event_generator(), media_type="text/event-stream")
 
 
+# 更新 PPT 大纲
+@router.post("/update_outline", response_model=ResponseSchema)
+async def update_outline_endpoint(
+    data: dict,
+    db: Session = Depends(get_db),
+    user: str = Depends(get_current_user)
+):
+    from crud.messages import get_tool_call_by_message_and_name
+
+    message_id = data.get("message_id")
+    outline = data.get("outline")
+
+    if not message_id or not outline:
+        return ResponseSchema.fail(message="缺少 message_id 或 outline 参数")
+
+    slides = outline.get("slides")
+    style = outline.get("style")
+    if not slides or not isinstance(slides, list) or len(slides) == 0:
+        return ResponseSchema.fail(message="至少需要保留一页幻灯片")
+    if not style or not isinstance(style, dict):
+        return ResponseSchema.fail(message="缺少 style 对象")
+
+    # 查找大纲记录
+    tool_call = get_tool_call_by_message_and_name(db, message_id, "ppt_outline")
+    if not tool_call:
+        return ResponseSchema.fail(message="大纲记录不存在")
+    if tool_call.status != 2:
+        return ResponseSchema.fail(message="大纲已确认或已取消，无法修改")
+
+    # 更新内容
+    outline_data = json.dumps({"slides": slides, "style": style}, ensure_ascii=False)
+    update_tool_content(db, tool_call.id, outline_data)
+
+    return ResponseSchema.ok(message="大纲更新成功")
+
+
 # 创建新聊天
 @router.post('/create_chat', response_model=ResponseSchema)
 async def create_chat_router(chatData: CreateChat, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
