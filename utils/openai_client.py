@@ -443,171 +443,22 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
     yield {"type": "outline", "slides": slides, "style": style}
 
 
-async def ppt_stream(messages, cancel_event: asyncio.Event = None):
+async def ppt_slide_stream(slides, style, user_msg: str, cancel_event: asyncio.Event = None):
     """
-    PPT 生成专用流式函数（两阶段）：
-    阶段1: 工具调用 ReAct 循环 + Structured Output 生成大纲 → yield outline 事件
-    阶段2: 逐页生成 HTML → yield slide_* 事件
+    PPT 幻灯片 HTML 生成流式函数：接收大纲 slides 和 style，逐页生成 HTML。
 
     Args:
+        slides: 大纲 slides 数组（list of dict），每个 dict 包含 index, title, subtitle, description, layout, points, visualSuggestion
+        style: 大纲 style 对象（dict），包含 theme, primaryColor, secondaryColor 等
+        user_msg: 用户原始请求消息（字符串）
         cancel_event: 客户端断开时设置此事件，用于提前终止 LLM 推理
+
+    yield 事件类型: slide_start, slide_chunk, slide_end, think, text, done
     """
-    # 最后一条用户消息作为主题，之前的对话历史作为上下文
-    user_msg = ""
-    for msg in messages:
-        if msg.get("role") == "user":
-            user_msg = msg.get("content", "")
-
-    # 对话历史（不含最后一条用户消息）作为上下文，取最近 6 条，每条截断 500 字
-    history = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
-
-    # === 阶段1: 生成大纲（支持工具调用）===
-    outline_messages = [{"role": "system", "content": ppt_outline_prompt}]
-    if history:
-        recent = history[-6:]
-        history_text = "\n".join(
-            f"{'用户' if m.get('role') == 'user' else '助手'}：{m.get('content', '')[:500]}"
-            for m in recent
-        )
-        outline_messages.append({
-            "role": "system",
-            "content": f"以下是之前的对话历史，用户可能引用其中的内容作为 PPT 主题，请结合上下文理解用户意图：\n\n{history_text}"
-        })
-    outline_messages.append({"role": "user", "content": user_msg})
-
-    # ReAct 循环：LLM 可调用工具查询资料后再生成大纲
-    while True:
-        collected_content = ""
-        collected_reasoning = ""
-        tool_calls_map = {}
-
-        stream = await client.chat.completions.create(
-            model="mimo-v2.5-pro",
-            messages=outline_messages,
-            tools=TOOLS,
-            stream=True,
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-
-        async for chunk in stream:
-            # 检测客户端是否断开
-            if cancel_event and cancel_event.is_set():
-                await stream.close()
-                return
-
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if not delta:
-                continue
-
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                collected_reasoning += reasoning
-                yield {"content": reasoning, "type": "think"}
-
-            if delta.content is not None:
-                collected_content += delta.content
-
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in tool_calls_map:
-                        tool_calls_map[idx] = {
-                            "id": tc.id or "",
-                            "name": tc.function.name or "",
-                            "arguments": tc.function.arguments or "",
-                        }
-                    else:
-                        if tc.id:
-                            tool_calls_map[idx]["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            tool_calls_map[idx]["name"] = tc.function.name
-                        if tc.function and tc.function.arguments:
-                            tool_calls_map[idx]["arguments"] += tc.function.arguments
-
-        # 检测客户端断开或没有工具调用，结束 ReAct 循环
-        if (cancel_event and cancel_event.is_set()) or not tool_calls_map:
-            break
-
-        # 有工具调用：执行工具并追加结果
-        assistant_msg = {"role": "assistant", "content": collected_content or None}
-        if collected_reasoning:
-            assistant_msg["reasoning_content"] = collected_reasoning
-        assistant_msg["tool_calls"] = [
-            {
-                "id": tc["id"],
-                "type": "function",
-                "function": {"name": tc["name"], "arguments": tc["arguments"]},
-            }
-            for tc in tool_calls_map.values()
-        ]
-        outline_messages.append(assistant_msg)
-
-        for tc in tool_calls_map.values():
-            tool_name = tc["name"]
-            tool_args = json.loads(tc["arguments"])
-
-            args = tool_args.get("city") or tool_args.get("query")
-            yield {"type": "tool_start", "tool": tool_name, "tool_run_id": tc["id"], "args": args}
-
-            tool_func = TOOL_MAP.get(tool_name)
-            if tool_func:
-                tool_result = await tool_func(**tool_args)
-            else:
-                tool_result = f"未知工具: {tool_name}"
-
-            tool_content = tool_result
-            if isinstance(tool_result, str):
-                try:
-                    parsed = json.loads(tool_result)
-                    if tool_name == "weather_query":
-                        tool_content = parsed.get("full_data", parsed)
-                    else:
-                        tool_content = parsed
-                except json.JSONDecodeError:
-                    pass
-
-            yield {"type": "tool_mid", "tool": tool_name, "tool_run_id": tc["id"], "tool_content": tool_content}
-
-            outline_messages.append(
-                {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
-            )
-
-    # === 用 Structured Output 生成大纲 JSON ===
-    outline_messages.append({
-        "role": "user",
-        "content": "请根据以上信息，严格按照 JSON Schema 输出大纲。",
-    })
-
-    resp = await client.chat.completions.create(
-        model="mimo-v2.5-pro",
-        messages=outline_messages,
-        response_format={"type": "json_object"},
-        extra_body={"thinking": {"type": "disabled"}},
-    )
-
-    raw = resp.choices[0].message.content or ""
-
-    # Pydantic 校验
-    try:
-        outline = SlideOutline.model_validate_json(raw)
-    except Exception as e:
-        yield {"type": "error", "content": f"大纲结构校验失败: {str(e)}"}
-        return
-
-    if not outline.slides:
-        yield {"type": "error", "content": "大纲为空，请重试"}
-        return
-
-    slides = [s.model_dump() for s in outline.slides]
-    style = outline.style.model_dump()
-
-    # 返回大纲给前端（包含样式信息）
-    yield {"type": "outline", "slides": slides, "style": style}
-
     # 将样式指南序列化为字符串，注入每页的 prompt
     style_guide = json.dumps(style, ensure_ascii=False, indent=2) if style else "{}"
 
-    # === 阶段2: 逐页生成 HTML ===
+    # === 逐页生成 HTML ===
     prev_html = ""  # 前一页 HTML，用于保持视觉一致性
     trailing_text = ""  # 最后一页 HTML 之后的提示文本
     failed_slides = []  # 记录失败的页码
@@ -796,6 +647,172 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
                 yield {"type": "text", "content": delta.content}
 
     yield {"type": "done", "content": True}
+
+
+async def ppt_stream(messages, cancel_event: asyncio.Event = None):
+    """
+    PPT 生成专用流式函数（两阶段）：
+    阶段1: 工具调用 ReAct 循环 + Structured Output 生成大纲 → yield outline 事件
+    阶段2: 逐页生成 HTML → yield slide_* 事件
+
+    Args:
+        cancel_event: 客户端断开时设置此事件，用于提前终止 LLM 推理
+    """
+    # 最后一条用户消息作为主题，之前的对话历史作为上下文
+    user_msg = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_msg = msg.get("content", "")
+
+    # 对话历史（不含最后一条用户消息）作为上下文，取最近 6 条，每条截断 500 字
+    history = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+
+    # === 阶段1: 生成大纲（支持工具调用）===
+    outline_messages = [{"role": "system", "content": ppt_outline_prompt}]
+    if history:
+        recent = history[-6:]
+        history_text = "\n".join(
+            f"{'用户' if m.get('role') == 'user' else '助手'}：{m.get('content', '')[:500]}"
+            for m in recent
+        )
+        outline_messages.append({
+            "role": "system",
+            "content": f"以下是之前的对话历史，用户可能引用其中的内容作为 PPT 主题，请结合上下文理解用户意图：\n\n{history_text}"
+        })
+    outline_messages.append({"role": "user", "content": user_msg})
+
+    # ReAct 循环：LLM 可调用工具查询资料后再生成大纲
+    while True:
+        collected_content = ""
+        collected_reasoning = ""
+        tool_calls_map = {}
+
+        stream = await client.chat.completions.create(
+            model="mimo-v2.5-pro",
+            messages=outline_messages,
+            tools=TOOLS,
+            stream=True,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+
+        async for chunk in stream:
+            # 检测客户端是否断开
+            if cancel_event and cancel_event.is_set():
+                await stream.close()
+                return
+
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
+
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                collected_reasoning += reasoning
+                yield {"content": reasoning, "type": "think"}
+
+            if delta.content is not None:
+                collected_content += delta.content
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": tc.id or "",
+                            "name": tc.function.name or "",
+                            "arguments": tc.function.arguments or "",
+                        }
+                    else:
+                        if tc.id:
+                            tool_calls_map[idx]["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            tool_calls_map[idx]["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tool_calls_map[idx]["arguments"] += tc.function.arguments
+
+        # 检测客户端断开或没有工具调用，结束 ReAct 循环
+        if (cancel_event and cancel_event.is_set()) or not tool_calls_map:
+            break
+
+        # 有工具调用：执行工具并追加结果
+        assistant_msg = {"role": "assistant", "content": collected_content or None}
+        if collected_reasoning:
+            assistant_msg["reasoning_content"] = collected_reasoning
+        assistant_msg["tool_calls"] = [
+            {
+                "id": tc["id"],
+                "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+            }
+            for tc in tool_calls_map.values()
+        ]
+        outline_messages.append(assistant_msg)
+
+        for tc in tool_calls_map.values():
+            tool_name = tc["name"]
+            tool_args = json.loads(tc["arguments"])
+
+            args = tool_args.get("city") or tool_args.get("query")
+            yield {"type": "tool_start", "tool": tool_name, "tool_run_id": tc["id"], "args": args}
+
+            tool_func = TOOL_MAP.get(tool_name)
+            if tool_func:
+                tool_result = await tool_func(**tool_args)
+            else:
+                tool_result = f"未知工具: {tool_name}"
+
+            tool_content = tool_result
+            if isinstance(tool_result, str):
+                try:
+                    parsed = json.loads(tool_result)
+                    if tool_name == "weather_query":
+                        tool_content = parsed.get("full_data", parsed)
+                    else:
+                        tool_content = parsed
+                except json.JSONDecodeError:
+                    pass
+
+            yield {"type": "tool_mid", "tool": tool_name, "tool_run_id": tc["id"], "tool_content": tool_content}
+
+            outline_messages.append(
+                {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
+            )
+
+    # === 用 Structured Output 生成大纲 JSON ===
+    outline_messages.append({
+        "role": "user",
+        "content": "请根据以上信息，严格按照 JSON Schema 输出大纲。",
+    })
+
+    resp = await client.chat.completions.create(
+        model="mimo-v2.5-pro",
+        messages=outline_messages,
+        response_format={"type": "json_object"},
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+
+    raw = resp.choices[0].message.content or ""
+
+    # Pydantic 校验
+    try:
+        outline = SlideOutline.model_validate_json(raw)
+    except Exception as e:
+        yield {"type": "error", "content": f"大纲结构校验失败: {str(e)}"}
+        return
+
+    if not outline.slides:
+        yield {"type": "error", "content": "大纲为空，请重试"}
+        return
+
+    slides = [s.model_dump() for s in outline.slides]
+    style = outline.style.model_dump()
+
+    # 返回大纲给前端（包含样式信息）
+    yield {"type": "outline", "slides": slides, "style": style}
+
+    # === 阶段2: 逐页生成 HTML（委托给 ppt_slide_stream）===
+    async for event in ppt_slide_stream(slides, style, user_msg, cancel_event):
+        yield event
 
 
 async def generate_chat_title(text: str) -> str:
