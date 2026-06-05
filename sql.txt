@@ -20,6 +20,7 @@ CREATE TABLE chat (
     id INT PRIMARY KEY AUTO_INCREMENT,
     title TEXT,
     user_id INT NOT NULL,
+    kb_id INT DEFAULT NULL COMMENT '绑定的知识库ID',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_chat_id (id),
@@ -35,6 +36,7 @@ CREATE TABLE messages (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     think_content TEXT,
     message_type VARCHAR(10) DEFAULT NULL COMMENT 'text/ppt, NULL=text',
+    rag_references JSON DEFAULT NULL COMMENT 'RAG引用的文档信息',
     INDEX idx_messages_id (id),
     FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE
 );
@@ -106,4 +108,52 @@ CREATE TABLE system_message (
     INDEX idx_system_message_id (id),
     FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE,
     FOREIGN KEY (source_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 8. knowledge_base 表（依赖 user）
+CREATE TABLE knowledge_base (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500) DEFAULT '',
+    chroma_collection VARCHAR(100) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_knowledge_base_id (id),
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+-- 9. knowledge_document 表（依赖 knowledge_base、chat、messages）
+CREATE TABLE knowledge_document (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    kb_id INT NOT NULL,
+    chat_id INT DEFAULT NULL COMMENT 'NULL=全局文档, 非NULL=会话专属文档',
+    message_id BIGINT DEFAULT NULL COMMENT 'NULL=未绑定消息, 非NULL=绑定到具体消息',
+    filename VARCHAR(255) NOT NULL,
+    file_type VARCHAR(20) NOT NULL,
+    chunk_count INT DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'processing' COMMENT 'processing/completed/failed',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_knowledge_document_id (id),
+    FOREIGN KEY (kb_id) REFERENCES knowledge_base(id) ON DELETE CASCADE,
+    FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
+-- 10. chat_attachment 表（依赖 chat、messages）
+CREATE TABLE chat_attachment (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    chat_id INT DEFAULT NULL,
+    message_id BIGINT DEFAULT NULL,
+    filename VARCHAR(255) NOT NULL,
+    file_type VARCHAR(20) NOT NULL,
+    file_size BIGINT NOT NULL,
+    minio_key VARCHAR(500) NOT NULL,
+    file_url VARCHAR(1000) DEFAULT NULL,
+    text_content TEXT DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_chat_attachment_id (id),
+    FOREIGN KEY (chat_id) REFERENCES chat(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
 );
