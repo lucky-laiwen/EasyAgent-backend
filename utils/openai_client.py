@@ -1,10 +1,11 @@
 from dotenv import load_dotenv
 import json
+import re
 import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Literal
 from utils.openai_tools import TOOLS, TOOL_MAP
 import os
 
@@ -25,6 +26,14 @@ class OutlineStyle(BaseModel):
     backgroundCSS: str = Field(description="完整 CSS background 值")
 
 
+class SlideImage(BaseModel):
+    """幻灯片中的图片资源"""
+    url: str = Field(description="图片 URL")
+    type: Literal["web", "upload", "placeholder"] = Field(description="图片来源类型: web|upload|placeholder")
+    description: str = Field(default="", description="图片描述")
+    position: Literal["main", "background", "icon"] = Field(default="main", description="图片位置: main|background|icon")
+
+
 class SlideItem(BaseModel):
     """单页幻灯片大纲"""
     index: int = Field(description="页码，从 0 开始")
@@ -34,6 +43,7 @@ class SlideItem(BaseModel):
     layout: str = Field(description="布局类型: title|content|grid|split|summary")
     points: List[str] = Field(default_factory=list, description="要点列表")
     visualSuggestion: str = Field(default="", description="推荐的图标/图片元素")
+    images: List[SlideImage] = Field(default_factory=list, description="本页图片列表，前端可渲染和替换")
 
 
 class SlideOutline(BaseModel):
@@ -229,9 +239,47 @@ def replace_cdn_urls(html: str) -> str:
     return html
 
 
+def extract_images_from_visual_suggestion(visual_suggestion: str) -> list[dict]:
+    """从 visualSuggestion 字符串中提取图片 URL，返回结构化图片列表。"""
+    if not visual_suggestion:
+        return []
+
+    images = []
+    # 匹配 http/https 开头的图片 URL
+    url_pattern = re.compile(
+        r'https?://[^\s,;，；)\]}一-鿿]+?\.(?:jpg|jpeg|png|gif|webp|svg|bmp)(?:\?[^\s,;，；)\]}一-鿿]*)?',
+        re.IGNORECASE
+    )
+    urls = url_pattern.findall(visual_suggestion)
+
+    for url in urls:
+        # 取 URL 前最近一个分隔符之后的文本作为上下文
+        prefix = visual_suggestion[:visual_suggestion.index(url)]
+        segment = re.split(r'[;；,，]', prefix)[-1].strip().lower()
+
+        if any(kw in segment for kw in ["背景", "background", "底图"]):
+            position = "background"
+        elif any(kw in segment for kw in ["图标", "icon", "小图"]):
+            position = "icon"
+        else:
+            position = "main"
+
+        # 提取 URL 前面的描述文字（最近的 "xxx:" 格式）
+        desc_match = re.search(r'[一-鿿\w]+[:：]\s*$', prefix)
+        description = desc_match.group().rstrip(":：").strip() if desc_match else ""
+
+        images.append({
+            "url": url,
+            "type": "web",
+            "description": description,
+            "position": position,
+        })
+
+    return images
+
+
 def extract_style_summary(html: str) -> str:
     """从 slide HTML 中提取关键样式信息，用于下一页的视觉一致性参考，避免传递完整 HTML 导致上下文超长。"""
-    import re
     parts = []
 
     # 1. 提取 <style> 块中的自定义 CSS（背景、动画、关键样式）
@@ -380,35 +428,31 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
         ]
         outline_messages.append(assistant_msg)
 
+        # 先发送所有 tool_start 事件
         for tc in tool_calls_map.values():
-            tool_name = tc["name"]
             tool_args = json.loads(tc["arguments"])
-
             args = tool_args.get("city") or tool_args.get("query")
-            yield {"type": "tool_start", "tool": tool_name, "tool_run_id": tc["id"], "args": args}
+            yield {"type": "tool_start", "tool": tc["name"], "tool_run_id": tc["id"], "args": args}
 
-            tool_func = TOOL_MAP.get(tool_name)
-            if tool_func:
-                tool_result = await tool_func(**tool_args)
-            else:
-                tool_result = f"未知工具: {tool_name}"
+        # 并行执行所有工具调用
+        async def _run_tool(tc):
+            tool_args = json.loads(tc["arguments"])
+            tool_func = TOOL_MAP.get(tc["name"])
+            result = await tool_func(**tool_args) if tool_func else f"未知工具: {tc['name']}"
+            return tc, result
 
+        results = await asyncio.gather(*[_run_tool(tc) for tc in tool_calls_map.values()])
+
+        for tc, tool_result in results:
             tool_content = tool_result
             if isinstance(tool_result, str):
                 try:
                     parsed = json.loads(tool_result)
-                    if tool_name == "weather_query":
-                        tool_content = parsed.get("full_data", parsed)
-                    else:
-                        tool_content = parsed
+                    tool_content = parsed.get("full_data", parsed) if tc["name"] == "weather_query" else parsed
                 except json.JSONDecodeError:
                     pass
-
-            yield {"type": "tool_mid", "tool": tool_name, "tool_run_id": tc["id"], "tool_content": tool_content}
-
-            outline_messages.append(
-                {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
-            )
+            yield {"type": "tool_mid", "tool": tc["name"], "tool_run_id": tc["id"], "tool_content": tool_content}
+            outline_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
     # === 用 Structured Output 生成大纲 JSON ===
     outline_messages.append({
@@ -416,14 +460,21 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
         "content": "请根据以上信息，严格按照 JSON Schema 输出大纲。",
     })
 
-    resp = await client.chat.completions.create(
+    stream = await client.chat.completions.create(
         model="mimo-v2.5-pro",
         messages=outline_messages,
         response_format={"type": "json_object"},
+        stream=True,
         extra_body={"thinking": {"type": "disabled"}},
     )
-
-    raw = resp.choices[0].message.content or ""
+    raw = ""
+    async for chunk in stream:
+        if cancel_event and cancel_event.is_set():
+            await stream.close()
+            return
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if delta and delta.content:
+            raw += delta.content
 
     # Pydantic 校验
     try:
@@ -436,6 +487,11 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
         yield {"type": "error", "content": "大纲为空，请重试"}
         return
 
+    # 从 visualSuggestion 中提取图片信息，填充 images 字段
+    for slide in outline.slides:
+        if not slide.images and slide.visualSuggestion:
+            slide.images = [SlideImage(**img) for img in extract_images_from_visual_suggestion(slide.visualSuggestion)]
+
     slides = [s.model_dump() for s in outline.slides]
     style = outline.style.model_dump()
 
@@ -443,208 +499,242 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
     yield {"type": "outline", "slides": slides, "style": style}
 
 
-async def ppt_slide_stream(slides, style, user_msg: str, cancel_event: asyncio.Event = None):
-    """
-    PPT 幻灯片 HTML 生成流式函数：接收大纲 slides 和 style，逐页生成 HTML。
+async def _generate_single_slide(
+    slide: dict,
+    style_guide: str,
+    user_msg: str,
+    cancel_event: asyncio.Event,
+    queue: asyncio.Queue,
+):
+    """单页幻灯片 HTML 生成任务，将事件放入共享队列。"""
+    index = slide.get("index", 0)
+    title = slide.get("title", "")
+    description = slide.get("description", "")
+    layout = slide.get("layout", "content")
+    subtitle = slide.get("subtitle", "")
+    points = slide.get("points", [])
+    visual_suggestion = slide.get("visualSuggestion", "")
+    images = slide.get("images", [])
 
-    Args:
-        slides: 大纲 slides 数组（list of dict），每个 dict 包含 index, title, subtitle, description, layout, points, visualSuggestion
-        style: 大纲 style 对象（dict），包含 theme, primaryColor, secondaryColor 等
-        user_msg: 用户原始请求消息（字符串）
-        cancel_event: 客户端断开时设置此事件，用于提前终止 LLM 推理
+    if images:
+        img_descriptions = []
+        for img in images:
+            desc = img.get("description", "")
+            url = img.get("url", "")
+            pos = img.get("position", "main")
+            if url:
+                img_descriptions.append(f"图片({pos}): {url}" + (f" — {desc}" if desc else ""))
+        if img_descriptions:
+            visual_suggestion = "\n".join(img_descriptions)
 
-    yield 事件类型: slide_start, slide_chunk, slide_end, think, text, done
-    """
-    # 将样式指南序列化为字符串，注入每页的 prompt
-    style_guide = json.dumps(style, ensure_ascii=False, indent=2) if style else "{}"
+    points_text = "\n".join(f"  - {p}" for p in points) if points else "  (无)"
 
-    # === 逐页生成 HTML ===
-    prev_html = ""  # 前一页 HTML，用于保持视觉一致性
-    trailing_text = ""  # 最后一页 HTML 之后的提示文本
-    failed_slides = []  # 记录失败的页码
-    total_slides = len(slides)
-    for slide_i, slide in enumerate(slides):
-        index = slide.get("index", 0)
-        title = slide.get("title", "")
-        description = slide.get("description", "")
-        layout = slide.get("layout", "content")
+    user_content = (
+        f"标题: {title}\n"
+        f"副标题: {subtitle}\n"
+        f"描述: {description}\n"
+        f"主题: {user_msg}\n"
+        f"布局类型: {layout}\n"
+        f"\n--- 内容要点（必须全部体现在幻灯片中）---\n{points_text}"
+    )
+    if visual_suggestion:
+        user_content += f"\n\n--- 视觉建议 ---\n{visual_suggestion}"
+    user_content += f"\n\n--- 样式指南（必须严格遵守）---\n{style_guide}"
 
-        yield {"type": "slide_start", "index": index}
+    slide_messages = [
+        {"role": "system", "content": ppt_slide_prompt},
+        {"role": "user", "content": user_content},
+    ]
 
-        # 构建用户消息：包含样式指南、布局类型、前一页参考
-        subtitle = slide.get("subtitle", "")
-        points = slide.get("points", [])
-        visual_suggestion = slide.get("visualSuggestion", "")
+    await queue.put({"type": "slide_start", "index": index})
 
-        points_text = "\n".join(f"  - {p}" for p in points) if points else "  (无)"
+    html_started = False
+    html_ended = False
+    buffer = ""
+    full_html = ""
 
-        user_content = (
-            f"标题: {title}\n"
-            f"副标题: {subtitle}\n"
-            f"描述: {description}\n"
-            f"主题: {user_msg}\n"
-            f"布局类型: {layout}\n"
-            f"\n--- 内容要点（必须全部体现在幻灯片中）---\n{points_text}"
-        )
-        if visual_suggestion:
-            user_content += f"\n\n--- 视觉建议 ---\n{visual_suggestion}"
-        user_content += f"\n\n--- 样式指南（必须严格遵守）---\n{style_guide}"
-        if prev_html:
-            # 提取前一页的关键样式信息（而非完整 HTML），避免上下文超长
-            style_ref = extract_style_summary(prev_html)
-            user_content += f"\n\n--- 前一页视觉风格摘要（保持一致性参考）---\n{style_ref}"
-
-        slide_messages = [
-            {"role": "system", "content": ppt_slide_prompt},
-            {"role": "user", "content": user_content},
-        ]
-
-        html_started = False
-        html_ended = False
-        buffer = ""
-        full_html = ""
-        trailing_text = ""  # 每页重置，最终保留最后一页的
-
-        try:
-            stream = await client.chat.completions.create(
-                model="mimo-v2.5-pro",
-                messages=slide_messages,
-                stream=True,
-                extra_body={"thinking": {"type": "disabled"}},
-            )
-        except Exception as e:
-            failed_slides.append(index + 1)
-            yield {"type": "text", "content": f"\n⚠️ 第 {index + 1} 页 API 调用失败: {str(e)[:100]}，跳过\n"}
-            continue
-
-        async for chunk in stream:
-            # 检测客户端是否断开
-            if cancel_event and cancel_event.is_set():
-                await stream.close()
-                return
-
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if not delta:
-                continue
-
-            # 思考内容
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                yield {"content": reasoning, "type": "think"}
-
-            if delta.content is None:
-                continue
-
-            if html_ended:
-                # HTML 已结束，收集后续提示文本
-                trailing_text += delta.content
-                continue
-
-            if not html_started:
-                buffer += delta.content
-                lower_buf = buffer.lower()
-
-                # 静默剥离代码围栏（```html 或 ```）
-                fence_pos = buffer.find("```")
-                if fence_pos != -1:
-                    after_fence = buffer[fence_pos + 3:]
-                    for lang in ["html", "htm", "ht", "h"]:
-                        if after_fence.lower().startswith(lang):
-                            after_fence = after_fence[len(lang):]
-                            break
-                    buffer = after_fence
-                    lower_buf = buffer.lower()
-
-                # 检测 HTML 起始，静默丢弃之前的所有非 HTML 内容
-                if "<html" in lower_buf or "<!doctype" in lower_buf:
-                    html_started = True
-                    html_start_idx = lower_buf.find("<!doctype")
-                    if html_start_idx == -1:
-                        html_start_idx = lower_buf.find("<html")
-                    filtered = replace_cdn_urls(buffer[html_start_idx:])
-                    full_html += filtered
-                    yield {"type": "slide_chunk", "index": index, "content": filtered}
-            else:
-                chunk_content = replace_cdn_urls(delta.content)
-                if not html_ended:
-                    # 检查当前 chunk 是否包含 </html>（考虑跨 chunk 边界的情况）
-                    pending_html = full_html + chunk_content
-                    if "</html>" in pending_html.lower():
-                        html_ended = True
-                        chunk_lower = chunk_content.lower()
-                        close_pos = chunk_lower.rfind("</html>")
-                        if close_pos != -1:
-                            # </html> 在当前 chunk 内
-                            end_pos = close_pos + len("</html>")
-                            html_part = chunk_content[:end_pos]
-                            full_html += html_part
-                            yield {"type": "slide_chunk", "index": index, "content": html_part}
-                            trailing_text += chunk_content[end_pos:]
-                        else:
-                            # </html> 跨 chunk 边界，当前 chunk 全部是 HTML 的一部分
-                            full_html += chunk_content
-                            yield {"type": "slide_chunk", "index": index, "content": chunk_content}
-                    else:
-                        full_html += chunk_content
-                        yield {"type": "slide_chunk", "index": index, "content": chunk_content}
-                else:
-                    trailing_text += chunk_content
-
-        # 剥离尾部代码围栏（```）
-        if full_html.rstrip().endswith("```"):
-            full_html = full_html.rstrip()
-            full_html = full_html[:-3].rstrip()
-
-        # 修复常见 HTML 问题（截断 CSS、未闭合标签等）
-        full_html = repair_html(full_html)
-
-        # 校验单页完整性
-        if not html_started or "</html>" not in full_html.lower():
-            failed_slides.append(index + 1)
-            yield {"type": "text", "content": f"\n⚠️ 第 {index + 1} 页生成失败，跳过继续生成后续页\n"}
-            continue
-
-        # 保存当前页 HTML，作为下一页的视觉参考
-        prev_html = full_html
-
-        yield {"type": "slide_end", "index": index}
-
-    # 全部完成，生成总结内容
-    ending = trailing_text.strip().rstrip("`").strip()
-    if ending:
-        yield {"type": "text", "content": ending}
-    else:
-        # 构建幻灯片摘要用于生成总结
-        slide_titles = [s.get("title", "") for s in slides]
-        total = len(slides)
-        generated = total - len(failed_slides)
-
-        summary_prompt = (
-            f"你刚刚为用户生成了一份关于「{user_msg}」的 PPT，共 {total} 页。\n"
-            f"各页标题：{'、'.join(slide_titles)}\n"
-        )
-        if failed_slides:
-            summary_prompt += f"其中第 {', '.join(map(str, failed_slides))} 页生成失败。\n"
-        summary_prompt += (
-            "\n请用 2-3 句话总结这份 PPT 的内容结构和亮点，语气自然友好，"
-            "并简要提示用户可以如何使用或修改这份演示文稿。不要重复列出每页标题。"
-        )
-
-        summary_messages = [
-            {"role": "system", "content": "你是一个 PPT 助手，擅长用简洁友好的语言总结演示文稿。"},
-            {"role": "user", "content": summary_prompt},
-        ]
-
+    try:
         stream = await client.chat.completions.create(
             model="mimo-v2.5-pro",
-            messages=summary_messages,
+            messages=slide_messages,
             stream=True,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
-                yield {"type": "text", "content": delta.content}
+    except Exception as e:
+        await queue.put({"type": "text", "content": f"\n⚠️ 第 {index + 1} 页 API 调用失败: {str(e)[:100]}，跳过\n"})
+        await queue.put({"type": "slide_done", "index": index, "html": None})
+        return
+
+    async for chunk in stream:
+        if cancel_event and cancel_event.is_set():
+            await stream.close()
+            await queue.put({"type": "slide_done", "index": index, "html": None})
+            return
+
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if not delta:
+            continue
+
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            await queue.put({"content": reasoning, "type": "think"})
+
+        if delta.content is None:
+            continue
+
+        if html_ended:
+            continue
+
+        if not html_started:
+            buffer += delta.content
+            lower_buf = buffer.lower()
+
+            fence_pos = buffer.find("```")
+            if fence_pos != -1:
+                after_fence = buffer[fence_pos + 3:]
+                for lang in ["html", "htm", "ht", "h"]:
+                    if after_fence.lower().startswith(lang):
+                        after_fence = after_fence[len(lang):]
+                        break
+                buffer = after_fence
+                lower_buf = buffer.lower()
+
+            if "<html" in lower_buf or "<!doctype" in lower_buf:
+                html_started = True
+                html_start_idx = lower_buf.find("<!doctype")
+                if html_start_idx == -1:
+                    html_start_idx = lower_buf.find("<html")
+                filtered = replace_cdn_urls(buffer[html_start_idx:])
+                full_html += filtered
+                await queue.put({"type": "slide_chunk", "index": index, "content": filtered})
+        else:
+            chunk_content = replace_cdn_urls(delta.content)
+            pending_html = full_html + chunk_content
+            if "</html>" in pending_html.lower():
+                html_ended = True
+                chunk_lower = chunk_content.lower()
+                close_pos = chunk_lower.rfind("</html>")
+                if close_pos != -1:
+                    end_pos = close_pos + len("</html>")
+                    html_part = chunk_content[:end_pos]
+                    full_html += html_part
+                    await queue.put({"type": "slide_chunk", "index": index, "content": html_part})
+                else:
+                    full_html += chunk_content
+                    await queue.put({"type": "slide_chunk", "index": index, "content": chunk_content})
+            else:
+                full_html += chunk_content
+                await queue.put({"type": "slide_chunk", "index": index, "content": chunk_content})
+
+    # 剥离尾部代码围栏（可能在 </html> 之前或之后）
+    cleaned = full_html.rstrip()
+    # 循环剥离尾部 ```
+    while cleaned.endswith("```"):
+        cleaned = cleaned[:-3].rstrip()
+    # 处理 ```html 或 ```htm 等变体
+    for fence in ["```html", "```htm", "```ht", "```h"]:
+        if cleaned.endswith(fence):
+            cleaned = cleaned[:-len(fence)].rstrip()
+    # 处理 </html> 后面残留的 ```
+    html_close = cleaned.lower().rfind("</html>")
+    if html_close != -1:
+        cleaned = cleaned[:html_close + len("</html>")]
+    full_html = cleaned
+
+    full_html = repair_html(full_html)
+
+    if not html_started or "</html>" not in full_html.lower():
+        await queue.put({"type": "text", "content": f"\n⚠️ 第 {index + 1} 页生成失败\n"})
+        await queue.put({"type": "slide_done", "index": index, "html": None})
+    else:
+        await queue.put({"type": "slide_done", "index": index, "html": full_html})
+
+
+async def ppt_slide_stream(slides, style, user_msg: str, cancel_event: asyncio.Event = None):
+    """
+    PPT 幻灯片 HTML 生成流式函数：并发生成所有幻灯片。
+
+    Args:
+        slides: 大纲 slides 数组
+        style: 大纲 style 对象
+        user_msg: 用户原始请求消息
+        cancel_event: 客户端断开时设置此事件
+
+    yield 事件类型: slide_start, slide_chunk, slide_end, think, text, done
+    """
+    style_guide = json.dumps(style, ensure_ascii=False, indent=2) if style else "{}"
+
+    queue: asyncio.Queue = asyncio.Queue()
+    sentinel = object()
+
+    async def run_all():
+        try:
+            tasks = [
+                asyncio.create_task(
+                    _generate_single_slide(slide, style_guide, user_msg, cancel_event, queue)
+                )
+                for slide in slides
+            ]
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            await queue.put(sentinel)
+
+    producer = asyncio.create_task(run_all())
+
+    finished_slides: dict[int, str | None] = {}
+
+    try:
+        while True:
+            event = await queue.get()
+            if event is sentinel:
+                break
+
+            etype = event.get("type")
+
+            if etype == "slide_done":
+                idx = event["index"]
+                html = event["html"]
+                finished_slides[idx] = html
+                if html:
+                    yield {"type": "slide_end", "index": idx}
+                continue
+
+            yield event
+    finally:
+        if not producer.done():
+            producer.cancel()
+
+    # 全部完成，生成总结
+    slide_titles = [s.get("title", "") for s in slides]
+    total = len(slides)
+    failed = [i for i, h in finished_slides.items() if h is None]
+
+    summary_prompt = (
+        f"你刚刚为用户生成了一份关于「{user_msg}」的 PPT，共 {total} 页。\n"
+        f"各页标题：{'、'.join(slide_titles)}\n"
+    )
+    if failed:
+        summary_prompt += f"其中第 {', '.join(str(i + 1) for i in failed)} 页生成失败。\n"
+    summary_prompt += (
+        "\n请用 2-3 句话总结这份 PPT 的内容结构和亮点，语气自然友好，"
+        "并简要提示用户可以如何使用或修改这份演示文稿。不要重复列出每页标题。"
+    )
+
+    summary_messages = [
+        {"role": "system", "content": "你是一个 PPT 助手，擅长用简洁友好的语言总结演示文稿。"},
+        {"role": "user", "content": summary_prompt},
+    ]
+
+    stream = await client.chat.completions.create(
+        model="mimo-v2.5-pro",
+        messages=summary_messages,
+        stream=True,
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if delta and delta.content:
+            yield {"type": "text", "content": delta.content}
 
     yield {"type": "done", "content": True}
 
@@ -748,35 +838,31 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
         ]
         outline_messages.append(assistant_msg)
 
+        # 先发送所有 tool_start 事件
         for tc in tool_calls_map.values():
-            tool_name = tc["name"]
             tool_args = json.loads(tc["arguments"])
-
             args = tool_args.get("city") or tool_args.get("query")
-            yield {"type": "tool_start", "tool": tool_name, "tool_run_id": tc["id"], "args": args}
+            yield {"type": "tool_start", "tool": tc["name"], "tool_run_id": tc["id"], "args": args}
 
-            tool_func = TOOL_MAP.get(tool_name)
-            if tool_func:
-                tool_result = await tool_func(**tool_args)
-            else:
-                tool_result = f"未知工具: {tool_name}"
+        # 并行执行所有工具调用
+        async def _run_tool(tc):
+            tool_args = json.loads(tc["arguments"])
+            tool_func = TOOL_MAP.get(tc["name"])
+            result = await tool_func(**tool_args) if tool_func else f"未知工具: {tc['name']}"
+            return tc, result
 
+        results = await asyncio.gather(*[_run_tool(tc) for tc in tool_calls_map.values()])
+
+        for tc, tool_result in results:
             tool_content = tool_result
             if isinstance(tool_result, str):
                 try:
                     parsed = json.loads(tool_result)
-                    if tool_name == "weather_query":
-                        tool_content = parsed.get("full_data", parsed)
-                    else:
-                        tool_content = parsed
+                    tool_content = parsed.get("full_data", parsed) if tc["name"] == "weather_query" else parsed
                 except json.JSONDecodeError:
                     pass
-
-            yield {"type": "tool_mid", "tool": tool_name, "tool_run_id": tc["id"], "tool_content": tool_content}
-
-            outline_messages.append(
-                {"role": "tool", "tool_call_id": tc["id"], "content": tool_result}
-            )
+            yield {"type": "tool_mid", "tool": tc["name"], "tool_run_id": tc["id"], "tool_content": tool_content}
+            outline_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
     # === 用 Structured Output 生成大纲 JSON ===
     outline_messages.append({
@@ -784,14 +870,21 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
         "content": "请根据以上信息，严格按照 JSON Schema 输出大纲。",
     })
 
-    resp = await client.chat.completions.create(
+    stream = await client.chat.completions.create(
         model="mimo-v2.5-pro",
         messages=outline_messages,
         response_format={"type": "json_object"},
+        stream=True,
         extra_body={"thinking": {"type": "disabled"}},
     )
-
-    raw = resp.choices[0].message.content or ""
+    raw = ""
+    async for chunk in stream:
+        if cancel_event and cancel_event.is_set():
+            await stream.close()
+            return
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if delta and delta.content:
+            raw += delta.content
 
     # Pydantic 校验
     try:
@@ -803,6 +896,11 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
     if not outline.slides:
         yield {"type": "error", "content": "大纲为空，请重试"}
         return
+
+    # 从 visualSuggestion 中提取图片信息，填充 images 字段
+    for slide in outline.slides:
+        if not slide.images and slide.visualSuggestion:
+            slide.images = [SlideImage(**img) for img in extract_images_from_visual_suggestion(slide.visualSuggestion)]
 
     slides = [s.model_dump() for s in outline.slides]
     style = outline.style.model_dump()

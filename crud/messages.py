@@ -102,4 +102,32 @@ def get_tool_call_by_message_and_name(db: Session, message_id: int, tool_name: s
     return db.query(ToolCall).filter(
         ToolCall.message_id == message_id,
         ToolCall.tool_name == tool_name
-    ).first()   
+    ).first()
+
+
+# 查询单条消息
+def get_message_by_id(db: Session, message_id: int) -> Optional[Message]:
+    return db.query(Message).filter(Message.id == message_id).first()
+
+
+# 删除消息关联的工具调用记录（可选保留指定类型）
+def delete_tool_calls_by_message(db: Session, message_id: int, exclude_tool_name: str = None):
+    query = db.query(ToolCall).filter(ToolCall.message_id == message_id)
+    if exclude_tool_name:
+        query = query.filter(ToolCall.tool_name != exclude_tool_name)
+    tool_calls = query.all()
+    for tc in tool_calls:
+        db.delete(tc)
+    db.commit()
+
+
+# 重置大纲状态用于重新生成
+def reset_outline_for_regenerate(db: Session, outline_tool_id: int) -> Optional[ToolCall]:
+    tool_call = db.query(ToolCall).filter(ToolCall.id == outline_tool_id).first()
+    if not tool_call:
+        return None
+    tool_call.status = 2
+    tool_call.tool_content = None
+    db.commit()
+    db.refresh(tool_call)
+    return tool_call

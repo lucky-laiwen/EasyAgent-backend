@@ -180,7 +180,6 @@ EasyAgent-backend/
 │   ├── optimizer_system_prompt.md# Agent 系统提示词（输出规范、工具触发规则）
 │   ├── ppt_outline_prompt.md     # PPT 大纲生成提示词
 │   ├── ppt_slide_prompt.md       # PPT 单页 HTML 生成提示词
-│   ├── ppt_system_prompt.md      # PPT 系统提示词
 │   ├── server.py                 # 独立 MCP 服务（FastMCP，stdio）
 │   ├── connection_manager.py     # WebSocket 连接管理器（按 user_id 维护）
 │   ├── i18n.py                   # gettext 中间件
@@ -235,6 +234,9 @@ EasyAgent-backend/
 |------|------|------|
 | POST | `/chat/create_chat` | 创建新会话（自动生成标题） |
 | POST | `/chat/stream` | **流式 AI 对话**（SSE，支持 `mode="ppt"` 生成演示文稿，支持 `doc_ids` 知识库检索 + `file_ids` 附件输入） |
+| POST | `/chat/ppt_outline` | **PPT 大纲生成**（SSE，支持新生成和重新生成，传入 `message_id` 重新生成） |
+| POST | `/chat/ppt_generate` | 从已确认大纲生成 PPT 幻灯片（SSE） |
+| POST | `/chat/update_outline` | 更新 PPT 大纲内容 |
 | POST | `/chat/upload_file` | 上传聊天附件（文本/图片），自动解析文本内容 |
 | GET | `/chat/get_chat_list` | 分页获取当前用户的会话列表 |
 | GET | `/chat/get_chat_message/{chat_id}` | 获取指定会话的消息 |
@@ -333,6 +335,22 @@ data: {"type": "text", "content": "已生成 N 页"}\n\n     // 结束语
 event: done
 data: {"done": true}
 ```
+
+### PPT 大纲重新生成
+
+`POST /chat/ppt_outline` 支持重新生成大纲，传入 `message_id` 参数即可：
+
+```json
+{
+  "message_id": 618
+}
+```
+
+重新生成时会：
+- 复用原有 AI 消息和聊天上下文
+- 清理原有的工具调用记录（web_search 等）
+- 重置大纲状态并覆盖原有内容
+- 返回相同的 `message_id`
 
 PPT 的 HTML 基于 **Reveal.js + TailwindCSS + Lucide Icons**，前端通过 `iframe srcdoc` 渲染。前端适配详见 `docs/ppt-frontend-integration.md`。
 
