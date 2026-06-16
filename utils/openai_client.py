@@ -48,8 +48,22 @@ class SlideItem(BaseModel):
 
 class SlideOutline(BaseModel):
     """PPT 大纲结构"""
-    style: OutlineStyle = Field(description="全局样式")
+    style: OutlineStyle | None = Field(default=None, description="全局样式（可选，由用户在前端选择）")
     slides: List[SlideItem] = Field(description="幻灯片列表")
+
+# 默认样式（前端未传入 style 时使用）
+DEFAULT_STYLE = {
+    "theme": "dark",
+    "primaryColor": "#3B82F6",
+    "secondaryColor": "#10B981",
+    "textColor": "#F9FAFB",
+    "subtextColor": "#D1D5DB",
+    "fontFamily": "Inter, system-ui, sans-serif",
+    "titleStyle": "text-4xl font-bold",
+    "bodyStyle": "text-lg leading-relaxed",
+    "cardStyle": "bg-white/10 backdrop-blur rounded-xl p-6",
+    "backgroundCSS": "linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%)",
+}
 
 load_dotenv()
 
@@ -493,10 +507,9 @@ async def ppt_outline_stream(messages, cancel_event: asyncio.Event = None):
             slide.images = [SlideImage(**img) for img in extract_images_from_visual_suggestion(slide.visualSuggestion)]
 
     slides = [s.model_dump() for s in outline.slides]
-    style = outline.style.model_dump()
 
-    # 返回大纲给前端（包含样式信息）
-    yield {"type": "outline", "slides": slides, "style": style}
+    # 返回大纲给前端（不含样式，样式由用户在前端选择）
+    yield {"type": "outline", "slides": slides}
 
 
 async def _generate_single_slide(
@@ -739,7 +752,7 @@ async def ppt_slide_stream(slides, style, user_msg: str, cancel_event: asyncio.E
     yield {"type": "done", "content": True}
 
 
-async def ppt_stream(messages, cancel_event: asyncio.Event = None):
+async def ppt_stream(messages, style: dict = None, cancel_event: asyncio.Event = None):
     """
     PPT 生成专用流式函数（两阶段）：
     阶段1: 工具调用 ReAct 循环 + Structured Output 生成大纲 → yield outline 事件
@@ -903,13 +916,13 @@ async def ppt_stream(messages, cancel_event: asyncio.Event = None):
             slide.images = [SlideImage(**img) for img in extract_images_from_visual_suggestion(slide.visualSuggestion)]
 
     slides = [s.model_dump() for s in outline.slides]
-    style = outline.style.model_dump()
 
-    # 返回大纲给前端（包含样式信息）
-    yield {"type": "outline", "slides": slides, "style": style}
+    # 返回大纲给前端（不含样式）
+    yield {"type": "outline", "slides": slides}
 
     # === 阶段2: 逐页生成 HTML（委托给 ppt_slide_stream）===
-    async for event in ppt_slide_stream(slides, style, user_msg, cancel_event):
+    slide_style = style or DEFAULT_STYLE
+    async for event in ppt_slide_stream(slides, slide_style, user_msg, cancel_event):
         yield event
 
 

@@ -3,34 +3,33 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=os.environ.get("MIMO_API_KEY"),
-    base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+    base_url="https://token-plan-sgp.xiaomimimo.com/v1"
 )
 
-# 测试非流式调用，检查是否有 reasoning_content
-resp = client.chat.completions.create(
-    model="mimo-v2.5-pro",
+completion = client.chat.completions.create(
+    model="mimo-v2.5",
     messages=[
-        {"role": "system", "content": "You are MiMo, an AI assistant developed by Xiaomi."},
-        {"role": "user", "content": "介绍一下你自己"}
+        {
+            "role": "system",
+            "content": "You are MiMo, an AI assistant developed by Xiaomi. Today is date: Tuesday, December 16, 2025. Your knowledge cutoff date is December 2024."
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://example-files.cnbj1.mi-fds.com/example-files/image/image_example.png"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": "please describe the content of the image"
+                }
+            ]
+        }
     ],
-    extra_body={"enable_thinking": True},
+    max_completion_tokens=1024
 )
 
-choice = resp.choices[0]
-msg = choice.message
-
-print("=== 回复内容 ===")
-print(msg.content)
-print()
-
-print("=== reasoning_content ===")
-reasoning = getattr(msg, "reasoning_content", None)
-print(reasoning if reasoning else "(无此字段)")
-print()
-
-print("=== 完整 message 对象属性 ===")
-print(dir(msg))
-print()
-
-print("=== 原始 response ===")
-print(resp.model_dump())
+print(completion.model_dump_json())

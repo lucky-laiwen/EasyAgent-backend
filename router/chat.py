@@ -322,8 +322,7 @@ async def ppt_outline_endpoint(
 
                 elif chunk_type == "outline":
                     outline_slides = chunk.get("slides", [])
-                    outline_style = chunk.get("style", {})
-                    outline_data = json.dumps({"slides": outline_slides, "style": outline_style}, ensure_ascii=False)
+                    outline_data = json.dumps({"slides": outline_slides}, ensure_ascii=False)
 
                     if is_regenerate:
                         # 更新原有大纲记录
@@ -376,11 +375,8 @@ async def update_outline_endpoint(
         return ResponseSchema.fail(message="缺少 message_id 或 outline 参数")
 
     slides = outline.get("slides")
-    style = outline.get("style")
     if not slides or not isinstance(slides, list) or len(slides) == 0:
         return ResponseSchema.fail(message="至少需要保留一页幻灯片")
-    if not style or not isinstance(style, dict):
-        return ResponseSchema.fail(message="缺少 style 对象")
 
     # 查找大纲记录
     tool_call = get_tool_call_by_message_and_name(db, message_id, "ppt_outline")
@@ -389,8 +385,8 @@ async def update_outline_endpoint(
     if tool_call.status != 2:
         return ResponseSchema.fail(message=f"大纲状态为 {tool_call.status}，无法修改（仅状态=2可修改）")
 
-    # 更新内容
-    outline_data = json.dumps({"slides": slides, "style": style}, ensure_ascii=False)
+    # 更新内容（只保存 slides，style 由前端管理）
+    outline_data = json.dumps({"slides": slides}, ensure_ascii=False)
     update_tool_content(db, tool_call.id, outline_data)
 
     return ResponseSchema.ok(message="大纲更新成功")
@@ -403,12 +399,15 @@ async def ppt_generate_endpoint(
     db: Session = Depends(get_db),
     user: str = Depends(get_current_user)
 ):
-    from utils.openai_client import ppt_slide_stream
+    from utils.openai_client import ppt_slide_stream, DEFAULT_STYLE
     from crud.messages import get_tool_call_by_message_and_name
 
     message_id = chatData.get("message_id")
     if not message_id:
         return ResponseSchema.fail(message="缺少 message_id 参数")
+
+    # 样式：优先使用前端传入的 style，否则使用默认样式
+    style = chatData.get("style") or DEFAULT_STYLE
 
     # 查找大纲记录
     outline_tool = get_tool_call_by_message_and_name(db, message_id, "ppt_outline")
@@ -421,7 +420,6 @@ async def ppt_generate_endpoint(
     try:
         outline_data = json.loads(outline_tool.tool_content)
         slides = outline_data.get("slides", [])
-        style = outline_data.get("style", {})
     except (json.JSONDecodeError, AttributeError):
         return ResponseSchema.fail(message="大纲数据格式错误")
 
@@ -690,15 +688,18 @@ async def create_chat_router(
                 rag_references = rag.build_references(chunks)
 
     if mode == "ppt":
+        from utils.openai_client import DEFAULT_STYLE
         # PPT 模式
         ai_msg = create_message(db, chatData.get("id"), "", 1, None, message_type="ppt")
         if not ai_msg:
             return ResponseSchema.fail(message="创建AI消息失败", data=None)
         ai_msg_out = Message.model_validate(ai_msg)
 
+        # 样式：优先使用前端传入的 style，否则使用默认样式
+        ppt_style = chatData.get("style") or DEFAULT_STYLE
+
         # 收集大纲、各页 HTML 和文本内容，用于增量落库
         outline_data = []
-        style_data = {}
         slides_html = {}  # index -> full_html
         text_parts = []   # 收集文本部分
         think_parts = []  # 收集思考内容
@@ -713,7 +714,7 @@ async def create_chat_router(
                 return
             ppt_data = {
                 "outline": outline_data,
-                "style": style_data,
+                "style": ppt_style,
                 "slides": [
                     {"index": i, "html": slides_html.get(i, "")}
                     for i in sorted(slides_html.keys())
@@ -735,9 +736,9 @@ async def create_chat_router(
         cancel_event = asyncio.Event()
 
         async def ppt_event_generator():
-            nonlocal outline_data, style_data, slides_html, text_parts, think_parts, tool_calls_data, tool_call_map, ppt_tool_call_id
+            nonlocal outline_data, slides_html, text_parts, think_parts, tool_calls_data, tool_call_map, ppt_tool_call_id
             try:
-                async for chunk in ppt_stream(messages_for_llm, cancel_event=cancel_event):
+                async for chunk in ppt_stream(messages_for_llm, style=ppt_style, cancel_event=cancel_event):
                     if not chunk:
                         continue
                     chunk_type = chunk.get("type")
@@ -776,7 +777,6 @@ async def create_chat_router(
 
                     elif chunk_type == "outline":
                         outline_data = chunk.get("slides", [])
-                        style_data = chunk.get("style", {})
                         save_ppt_incremental()
                         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
@@ -811,7 +811,7 @@ async def create_chat_router(
                         # 最终完整 PPT 数据写入，标记为完成（status=1）
                         ppt_data = {
                             "outline": outline_data,
-                            "style": style_data,
+                            "style": ppt_style,
                             "slides": [
                                 {"index": i, "html": slides_html.get(i, "")}
                                 for i in sorted(slides_html.keys())
